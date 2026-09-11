@@ -1253,6 +1253,19 @@ describe("update-cli", () => {
     ]);
   };
 
+  const postCoreValidationCommands = () =>
+    vi
+      .mocked(runExec)
+      .mock.calls.filter(([, args]) => ["doctor", "config"].includes(args[1] ?? ""))
+      .map(([, args]) => args.slice(1));
+
+  const postCoreDoctorCommand = [
+    "doctor",
+    "--repair",
+    "--non-interactive",
+    "--no-workspace-suggestions",
+  ];
+
   const commandResult = (
     overrides: Partial<{
       stdout: string;
@@ -4139,7 +4152,7 @@ describe("update-cli", () => {
     },
   );
 
-  it("post-core resume returns package work without running core update or Doctor completion", async () => {
+  it("post-core resume completes migration and validation without running core update", async () => {
     readPackageVersion.mockResolvedValue("2026.9.4");
     await runPostCoreCommand({ restart: false }, { OPENCLAW_UPDATE_POST_CORE_CONVERGENCE: "1" });
 
@@ -4157,7 +4170,10 @@ describe("update-cli", () => {
         ),
     ).toBe(true);
     expect(defaultRuntime.exit).toHaveBeenCalledWith(0);
-    expect(vi.mocked(runExec).mock.calls.filter(([, args]) => args[1] === "doctor")).toEqual([]);
+    expect(postCoreValidationCommands()).toEqual([
+      postCoreDoctorCommand,
+      ["config", "validate", "--json"],
+    ]);
     expect(syncPluginsForUpdateChannel).toHaveBeenCalledTimes(1);
     expect(updateNpmInstalledPlugins).toHaveBeenCalledTimes(1);
     expect(lastNpmPluginUpdateCall()).toMatchObject({
@@ -4179,7 +4195,7 @@ describe("update-cli", () => {
     });
   });
 
-  it("returns convergence-only post-core changes for the parent to complete", async () => {
+  it("completes convergence-only post-core changes before returning them to the parent", async () => {
     runPostCorePluginConvergenceSpy.mockResolvedValueOnce(
       postCoreConvergenceResult({
         changes: ["Repaired configured plugin install records."],
@@ -4190,11 +4206,11 @@ describe("update-cli", () => {
 
     expect(syncPluginCall()?.config).toBeDefined();
     expect(updateNpmInstalledPlugins).toHaveBeenCalledTimes(1);
-    expect(
-      vi
-        .mocked(runExec)
-        .mock.calls.filter(([, args]) => ["doctor", "config"].includes(args[1] ?? "")),
-    ).toEqual([]);
+    expect(postCoreValidationCommands()).toEqual([
+      postCoreDoctorCommand,
+      postCoreDoctorCommand,
+      ["config", "validate", "--json"],
+    ]);
     expect(lastWriteJsonCall()).toMatchObject({
       status: "ok",
       postUpdate: { plugins: { changed: true } },
@@ -4452,16 +4468,16 @@ describe("update-cli", () => {
     expect(result.npm.outcomes).toContainEqual(consentOutcome);
   });
 
-  it("returns changed package results without Doctor output during JSON post-core resume", async () => {
+  it("completes changed packages without mixing Doctor output into JSON post-core results", async () => {
     mockNpmPluginOutcomes([], true);
 
     await runPostCoreCommand({ json: true, restart: false });
 
-    expect(
-      vi
-        .mocked(runExec)
-        .mock.calls.filter(([, args]) => ["doctor", "config"].includes(args[1] ?? "")),
-    ).toEqual([]);
+    expect(postCoreValidationCommands()).toEqual([
+      postCoreDoctorCommand,
+      postCoreDoctorCommand,
+      ["config", "validate", "--json"],
+    ]);
     expect(JSON.parse(getLogOutput())).toEqual(lastWriteJsonCall());
     expect(defaultRuntime.writeJson).toHaveBeenCalledOnce();
     expect(defaultRuntime.writeJson).toHaveBeenCalledWith(
@@ -4517,6 +4533,7 @@ describe("update-cli", () => {
       demo: { source: "npm", spec: "@openclaw/demo@1.0.0", installPath },
     });
     pathExists.mockImplementation(async (candidate: string) => candidate === installPath);
+    vi.mocked(resolveGatewayInstallEntrypoint).mockResolvedValue(FRESH_POST_UPDATE_ENTRYPOINT);
 
     await runPostCoreCommand(
       { json: true, restart: false },
@@ -4607,11 +4624,10 @@ describe("update-cli", () => {
 
       if (mode === "resume") {
         await runPostCoreCommand({ restart: false, json: true });
-        expect(
-          vi
-            .mocked(runExec)
-            .mock.calls.filter(([, args]) => ["doctor", "config"].includes(args[1] ?? "")),
-        ).toEqual([]);
+        expect(postCoreValidationCommands()).toEqual([
+          postCoreDoctorCommand,
+          ...(valid ? [["config", "validate", "--json"]] : []),
+        ]);
       } else {
         vi.mocked(resolveGatewayInstallEntrypoint).mockResolvedValue(FRESH_POST_UPDATE_ENTRYPOINT);
         if (valid) {
@@ -11892,7 +11908,13 @@ describe("update-cli", () => {
         for (const suffix of [".pre-update", ".bak"]) {
           await writeJsonFixture(`${configPath}${suffix}`, preUpdateConfig);
         }
-        vi.mocked(runExec).mockRejectedValueOnce(new Error("ps unavailable"));
+        const run = requireValue(vi.mocked(runExec).getMockImplementation(), "runExec mock");
+        vi.mocked(runExec).mockImplementation(async (file, ...rest) => {
+          if (file === "ps" || file === "powershell.exe") {
+            throw new Error("ps unavailable");
+          }
+          return await run(file, ...rest);
+        });
         return {};
       },
     },
@@ -11931,13 +11953,13 @@ describe("update-cli", () => {
     const preUpdateConfig = stableWhatsAppConfig();
     const postDoctorConfig = stableConfig();
     await setupPostCoreConfigFixture({ preUpdateConfig, postDoctorConfig });
-    vi.mocked(runExec).mockImplementationOnce(async (file, commandArgs) => {
-      expect(file).toBe("powershell.exe");
-      expect(commandArgs).toContain("-NonInteractive");
-      return {
-        stdout: new Date(Date.now() - 1_000).toISOString(),
-        stderr: "",
-      };
+    const run = requireValue(vi.mocked(runExec).getMockImplementation(), "runExec mock");
+    vi.mocked(runExec).mockImplementation(async (file, commandArgs, options) => {
+      if (file === "powershell.exe") {
+        expect(commandArgs).toContain("-NonInteractive");
+        return { stdout: new Date(Date.now() - 1_000).toISOString(), stderr: "" };
+      }
+      return await run(file, commandArgs, options);
     });
     const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
     Object.defineProperty(process, "platform", {
@@ -11953,6 +11975,11 @@ describe("update-cli", () => {
       }
     }
 
+    expect(runExec).toHaveBeenCalledWith(
+      "powershell.exe",
+      expect.arrayContaining(["-NonInteractive"]),
+      expect.objectContaining({ logOutput: false, timeoutMs: 1_000 }),
+    );
     expect(syncPluginCall()?.config?.channels?.whatsapp).toEqual(
       preUpdateConfig.channels?.whatsapp,
     );
@@ -13052,7 +13079,7 @@ describe("update-cli", () => {
     });
   });
 
-  it("updateFinalizeCommand defers plugin installation during pre-plugin doctor", async () => {
+  it("updateFinalizeCommand admits migration Doctor after plugin convergence", async () => {
     vi.mocked(resolveGatewayInstallEntrypoint).mockResolvedValue(FRESH_POST_UPDATE_ENTRYPOINT);
     await withEnvAsync(
       {
@@ -13081,7 +13108,7 @@ describe("update-cli", () => {
         expect(doctorEnv?.OPENCLAW_UPDATE_IN_PROGRESS).toBe("1");
         expect(doctorEnv?.OPENCLAW_UPDATE_DEFER_CONFIGURED_PLUGIN_INSTALL_REPAIR).toBe("1");
         expect(doctorEnv?.OPENCLAW_UPDATE_PARENT_SUPPORTS_DOCTOR_CONFIG_WRITE).toBe("1");
-        expect(doctorEnv?.OPENCLAW_UPDATE_POST_CORE_CONVERGENCE).toBeUndefined();
+        expect(doctorEnv?.OPENCLAW_UPDATE_POST_CORE_CONVERGENCE).toBe("1");
         expect(process.env.OPENCLAW_UPDATE_IN_PROGRESS).toBeUndefined();
         expect(process.env.OPENCLAW_UPDATE_DEFER_CONFIGURED_PLUGIN_INSTALL_REPAIR).toBeUndefined();
         expect(process.env.OPENCLAW_UPDATE_PARENT_SUPPORTS_DOCTOR_CONFIG_WRITE).toBeUndefined();
