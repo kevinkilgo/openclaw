@@ -856,7 +856,6 @@ describe("runDaemonInstall", () => {
       OPENAI_API_KEY: "file",
       OPENCLAW_WRAPPER: "inline",
     };
-    service.isLoaded.mockResolvedValue(false);
     service.readCommand.mockResolvedValue({
       programArguments: ["/operator/drop-in-wrapper", "gateway", "run"],
       environment: {
