@@ -172,8 +172,7 @@ vi.mock("../../runtime.js", () => ({
 }));
 
 function expectFirstInstallPlanCallOmitsToken() {
-  const firstArg = readFirstInstallPlanArg();
-  expect("token" in firstArg).toBe(false);
+  expect("token" in readFirstInstallPlanArg()).toBe(false);
 }
 
 function expectFields(value: unknown, expected: Record<string, unknown>): void {
