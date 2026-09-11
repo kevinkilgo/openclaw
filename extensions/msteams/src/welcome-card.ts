@@ -2,16 +2,10 @@
  * Builds an Adaptive Card for welcoming users when the bot is added to a conversation.
  */
 
-const DEFAULT_PROMPT_STARTERS = [
-  "What can you do?",
-  "Summarize my last meeting",
-  "Help me draft an email",
-];
-
 type WelcomeCardOptions = {
-  /** Bot display name. Falls back to "OpenClaw". */
+  /** Bot display name. Retained for API compatibility. */
   botName?: string;
-  /** Custom prompt starters. Falls back to defaults. */
+  /** Custom prompt starters. Retained for API compatibility. */
   promptStarters?: string[];
 };
 
@@ -19,10 +13,7 @@ type WelcomeCardOptions = {
  * Build a welcome Adaptive Card for 1:1 personal chats.
  */
 export function buildWelcomeCard(options?: WelcomeCardOptions): Record<string, unknown> {
-  const botName = options?.botName || "OpenClaw";
-  const starters = options?.promptStarters?.length
-    ? options.promptStarters
-    : DEFAULT_PROMPT_STARTERS;
+  void options;
 
   return {
     type: "AdaptiveCard",
@@ -30,23 +21,15 @@ export function buildWelcomeCard(options?: WelcomeCardOptions): Record<string, u
     body: [
       {
         type: "TextBlock",
-        text: `Hi! I'm ${botName}.`,
+        text: "Hi! Im Your Fulcrum Agentic Assistant. Say Hi to get your personalized, private autonomous agent configured.",
         // Adaptive Card TextWeight/TextSize enums are PascalCase ("Bolder"/"Medium"); lowercase
         // values fall back to Default, so the greeting rendered unstyled (matches polls/presentation).
         weight: "Bolder",
         size: "Medium",
-      },
-      {
-        type: "TextBlock",
-        text: "I can help you with questions, tasks, and more. Here are some things to try:",
         wrap: true,
       },
     ],
-    actions: starters.map((label) => ({
-      type: "Action.Submit",
-      title: label,
-      data: { msteams: { type: "imBack", value: label } },
-    })),
+    actions: [],
   };
 }
 

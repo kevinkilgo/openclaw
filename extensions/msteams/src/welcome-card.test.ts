@@ -98,17 +98,19 @@ describe("buildMSTeamsPresentationCard", () => {
 });
 
 describe("buildWelcomeCard", () => {
-  it("builds card with default prompt starters", () => {
+  it("builds the Fulcrum onboarding welcome card", () => {
     const card = buildWelcomeCard();
     expect(card.type).toBe("AdaptiveCard");
     expect(card.version).toBe("1.5");
 
     const body = card.body as Array<{ text: string }>;
-    expect(body[0]?.text).toContain("OpenClaw");
+    expect(body).toHaveLength(1);
+    expect(body[0]?.text).toBe(
+      "Hi! Im Your Fulcrum Agentic Assistant. Say Hi to get your personalized, private autonomous agent configured.",
+    );
 
     const actions = card.actions as Array<{ title: string; data: unknown }>;
-    expect(actions.length).toBe(3);
-    expect(actions[0]?.title).toBe("What can you do?");
+    expect(actions).toEqual([]);
   });
 
   it("styles the heading with valid PascalCase Adaptive Card enum values", () => {
@@ -120,31 +122,24 @@ describe("buildWelcomeCard", () => {
     expect(heading?.size).toBe("Medium");
   });
 
-  it("uses custom bot name", () => {
+  it("ignores custom bot name", () => {
     const card = buildWelcomeCard({ botName: "TestBot" });
     const body = card.body as Array<{ text: string }>;
-    expect(body[0]?.text).toContain("TestBot");
+    expect(body[0]?.text).not.toContain("TestBot");
   });
 
-  it("uses custom prompt starters", () => {
+  it("ignores custom prompt starters", () => {
     const card = buildWelcomeCard({
       promptStarters: ["Do X", "Do Y"],
     });
     const actions = card.actions as Array<{ title: string; data: unknown }>;
-    expect(actions.length).toBe(2);
-    expect(actions[0]?.title).toBe("Do X");
-    expect(actions[1]?.title).toBe("Do Y");
-
-    // Verify imBack data
-    const data = actions[0]?.data as { msteams: { type: string; value: string } };
-    expect(data.msteams.type).toBe("imBack");
-    expect(data.msteams.value).toBe("Do X");
+    expect(actions).toEqual([]);
   });
 
-  it("falls back to defaults when promptStarters is empty", () => {
+  it("keeps actions empty when promptStarters is empty", () => {
     const card = buildWelcomeCard({ promptStarters: [] });
     const actions = card.actions as Array<{ title: string }>;
-    expect(actions.length).toBe(3);
+    expect(actions).toEqual([]);
   });
 });
 
