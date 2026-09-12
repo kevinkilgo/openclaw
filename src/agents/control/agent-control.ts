@@ -91,6 +91,22 @@ export type ManagedFileUpdateRequest = {
   reason: string;
 };
 
+export type AgentControlOperationRequest =
+  | { action: "readStatus"; targetAgentId: string }
+  | { action: "sendMessage"; targetAgentId: string; message: string }
+  | { action: "readManagedFile"; targetAgentId: string; relativePath: string };
+
+export type AgentControlOperationPlan = {
+  status: "planned";
+  action: AgentControlOperationRequest["action"];
+  target: AgentControlRecord;
+  audit: AgentControlAuditEvent;
+  endpoint?: AgentControlEndpoint;
+  workspace?: AgentControlWorkspace;
+  relativePath?: string;
+  message?: string;
+};
+
 export type AgentControlRegistryParseResult =
   | { ok: true; registry: AgentControlRegistry }
   | { ok: false; errors: string[] };
@@ -455,6 +471,68 @@ export function buildManagedFileUpdatePlan(params: {
       relativePath: normalizeRelativePath(params.request.relativePath)!,
     },
     target,
+    audit: authorization.audit,
+  };
+}
+
+export function buildAgentControlOperationPlan(params: {
+  registry: AgentControlRegistry;
+  principal: AgentControlPrincipal;
+  request: AgentControlOperationRequest;
+  now?: Date;
+}): AgentControlOperationPlan {
+  const target = resolveAgentControlRecord(params.registry, params.request.targetAgentId);
+  if (!target) {
+    throw new Error(`Unknown agent control target: ${params.request.targetAgentId}`);
+  }
+
+  const authorization = authorizeAgentControlAction({
+    registry: params.registry,
+    principal: params.principal,
+    targetAgentId: params.request.targetAgentId,
+    action: params.request.action,
+    now: params.now,
+  });
+  if (!authorization.allowed) {
+    throw new Error(`Agent control operation denied: ${authorization.reason}`);
+  }
+
+  if (params.request.action === "readManagedFile") {
+    if (!isManagedAgentMarkdownFile({ agent: target, relativePath: params.request.relativePath })) {
+      throw new Error(
+        `Agent control operation denied: unmanaged path ${params.request.relativePath}`,
+      );
+    }
+    return {
+      status: "planned",
+      action: params.request.action,
+      target,
+      workspace: target.workspace,
+      relativePath: normalizeRelativePath(params.request.relativePath)!,
+      audit: authorization.audit,
+    };
+  }
+
+  if (params.request.action === "sendMessage") {
+    const message = params.request.message.trim();
+    if (message.length === 0) {
+      throw new Error("Agent control operation denied: empty message");
+    }
+    return {
+      status: "planned",
+      action: params.request.action,
+      target,
+      endpoint: target.endpoint,
+      message,
+      audit: authorization.audit,
+    };
+  }
+
+  return {
+    status: "planned",
+    action: params.request.action,
+    target,
+    endpoint: target.endpoint,
     audit: authorization.audit,
   };
 }
