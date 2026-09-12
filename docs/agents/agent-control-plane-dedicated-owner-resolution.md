@@ -104,6 +104,17 @@ registry + task ledger + audited config patches + scoped authority
 
 not raw cross-agent editing or broad workspace mounts.
 
+Directional communication is explicit:
+
+- Artemis and Fiona receive fleet-management grants for all registered
+  agents/containers/subagents unless a target is explicitly excluded.
+- Employee-driven communication up to Artemis or Fiona is denied by default.
+- A source employee/subagent must be listed by agent id or approved owner team in
+  `upchainCommunication` before it can send up the chain.
+- Upchain communication starts as `sendMessage` only; status reads, file reads,
+  config proposals, reloads, and other management actions remain unavailable to
+  employee sources unless a later policy explicitly adds them.
+
 ## Manager Dashboard
 
 Add a manager dashboard for Artemis and Fiona after the registry and durable
@@ -190,6 +201,8 @@ Phase 1: Inventory and registry
   known employee-agent roots such as `/srv/openclaw/data/employee-agents/`.
 - Capture logical agent ids, teams, service identities, workspaces, lifecycle
   status, capabilities, manager grants, and managed Markdown allowlists.
+- Capture fleet-management grants for Artemis/Fiona and strict
+  `upchainCommunication` allowlists for employee-to-manager sends.
 - Keep discovery read-only and fail closed on duplicate ids, unsafe paths,
   empty grants, invalid service identities, or stale registry inputs.
 
@@ -197,6 +210,9 @@ Phase 2: Durable manager messaging
 
 - Formalize manager-to-agent task delivery with acknowledgement and evidence
   states: requested, accepted, blocked, rejected, done.
+- Separate manager-to-agent delivery from employee-to-manager escalation. The
+  latter must check the `upchainCommunication` allowlist before queuing any
+  message to Artemis or Fiona.
 - Make `sendMessage` queue-only, idempotent, non-preemptive, and observable
   before any live delivery path is approved.
 - Use the Tina/Artemis ledger pattern as the behavioral model: no silent drops,

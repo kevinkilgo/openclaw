@@ -68,6 +68,66 @@ const registry: AgentControlRegistry = {
   ],
 };
 
+const fleetRegistry: AgentControlRegistry = {
+  ...registry,
+  fleetManagement: {
+    managers: ["Artemis", "Fiona"],
+    managerTeams: ["artemis-leadership", "fiona-leadership"],
+    actions: ["list", "readStatus", "sendMessage", "readManagedFile"],
+  },
+  upchainCommunication: {
+    targetAgentIds: ["Artemis", "Fiona"],
+    allowedSourceAgentIds: ["babbey"],
+    allowedSourceOwnerTeams: ["employee-agents"],
+    actions: ["sendMessage"],
+  },
+  agents: [
+    {
+      id: "Artemis",
+      displayName: "Artemis",
+      ownerTeam: "artemis",
+      role: "chief-of-staff",
+      status: "ready",
+      endpoint: {
+        serviceName: "agent-artemis",
+        basePath: "/agent-control",
+        networks: ["openclaw-backplane"],
+      },
+      workspace: {
+        root: "/srv/openclaw/agents/artemis",
+        managedFiles: ["AGENTS.md", "knowledge/"],
+      },
+      capabilities: ["management", "orchestration"],
+      management: {
+        managers: ["Artemis"],
+        actions: ["list", "readStatus", "sendMessage", "readManagedFile"],
+      },
+    },
+    ...registry.agents,
+    {
+      id: "babbey",
+      displayName: "Brian Abbey",
+      ownerTeam: "employee-agents",
+      role: "employee-agent",
+      status: "ready",
+      endpoint: {
+        serviceName: "employee-agent-babbey",
+        basePath: "/agent-control",
+        networks: ["openclaw-backplane"],
+      },
+      workspace: {
+        root: "/srv/openclaw/data/employee-agents/babbey",
+        managedFiles: ["AGENTS.md", "memory/", "knowledge/"],
+      },
+      capabilities: ["teams", "microsoft365"],
+      management: {
+        managers: ["brian-abbey"],
+        actions: ["readStatus"],
+      },
+    },
+  ],
+};
+
 describe("agent control registry", () => {
   it("parses file-backed JSON registry content into normalized records", () => {
     const parsed = parseAgentControlRegistryJson({
@@ -225,6 +285,129 @@ describe("agent control registry", () => {
       decision: "allow",
     });
     expect(team.allowed).toBe(true);
+  });
+
+  it("authorizes Artemis and Fiona fleet management across registered agents", () => {
+    const artemisToEmployee = authorizeAgentControlAction({
+      registry: fleetRegistry,
+      principal: { agentId: "Artemis", teams: [], roles: ["manager"] },
+      targetAgentId: "babbey",
+      action: "sendMessage",
+      now: new Date("2026-09-12T00:00:00.000Z"),
+    });
+    const fionaTeamToEmployee = authorizeAgentControlAction({
+      registry: fleetRegistry,
+      principal: { agentId: "fiona-delegate", teams: ["fiona-leadership"], roles: ["manager"] },
+      targetAgentId: "babbey",
+      action: "readManagedFile",
+      now: new Date("2026-09-12T00:00:00.000Z"),
+    });
+
+    expect(artemisToEmployee).toMatchObject({
+      allowed: true,
+      reason: "allowed_by_fleet_management_scope",
+      audit: {
+        principalAgentId: "artemis",
+        targetAgentId: "babbey",
+        decision: "allow",
+      },
+    });
+    expect(fionaTeamToEmployee).toMatchObject({
+      allowed: true,
+      reason: "allowed_by_fleet_management_scope",
+    });
+  });
+
+  it("lets fleet management explicitly exclude sensitive targets", () => {
+    const excludedRegistry: AgentControlRegistry = {
+      ...fleetRegistry,
+      fleetManagement: {
+        ...fleetRegistry.fleetManagement!,
+        excludedAgentIds: ["babbey"],
+      },
+    };
+
+    const denied = authorizeAgentControlAction({
+      registry: excludedRegistry,
+      principal: { agentId: "Fiona", teams: [], roles: ["manager"] },
+      targetAgentId: "babbey",
+      action: "sendMessage",
+      now: new Date("2026-09-12T00:00:00.000Z"),
+    });
+
+    expect(denied).toMatchObject({
+      allowed: false,
+      reason: "principal_not_in_management_scope",
+      audit: { decision: "deny" },
+    });
+  });
+
+  it("allows only explicitly listed employees to send up the chain", () => {
+    const allowedToArtemis = authorizeAgentControlAction({
+      registry: fleetRegistry,
+      principal: { agentId: "babbey", teams: [], roles: ["employee"] },
+      targetAgentId: "Artemis",
+      action: "sendMessage",
+      now: new Date("2026-09-12T00:00:00.000Z"),
+    });
+    const allowedToFiona = authorizeAgentControlAction({
+      registry: fleetRegistry,
+      principal: { agentId: "babbey", teams: [], roles: ["employee"] },
+      targetAgentId: "Fiona",
+      action: "sendMessage",
+      now: new Date("2026-09-12T00:00:00.000Z"),
+    });
+
+    expect(allowedToArtemis).toMatchObject({
+      allowed: true,
+      reason: "allowed_by_upchain_communication_allowlist",
+      audit: {
+        principalAgentId: "babbey",
+        targetAgentId: "artemis",
+        action: "sendMessage",
+        decision: "allow",
+      },
+    });
+    expect(allowedToFiona).toMatchObject({
+      allowed: true,
+      reason: "allowed_by_upchain_communication_allowlist",
+    });
+  });
+
+  it("denies unlisted or unknown employees from communicating up the chain", () => {
+    const explicitListOnlyRegistry: AgentControlRegistry = {
+      ...fleetRegistry,
+      upchainCommunication: {
+        targetAgentIds: ["Artemis", "Fiona"],
+        allowedSourceAgentIds: ["babbey"],
+        actions: ["sendMessage"],
+      },
+    };
+    const denied = authorizeAgentControlAction({
+      registry: explicitListOnlyRegistry,
+      principal: { agentId: "hdadabhoy", teams: [], roles: ["employee"] },
+      targetAgentId: "Artemis",
+      action: "sendMessage",
+      now: new Date("2026-09-12T00:00:00.000Z"),
+    });
+    const unknownDenied = authorizeAgentControlAction({
+      registry: fleetRegistry,
+      principal: { agentId: "unknown-employee", teams: [], roles: ["employee"] },
+      targetAgentId: "Fiona",
+      action: "sendMessage",
+      now: new Date("2026-09-12T00:00:00.000Z"),
+    });
+
+    expect(denied).toMatchObject({
+      allowed: false,
+      reason: "principal_not_in_management_scope",
+      audit: { decision: "deny" },
+    });
+    expect(unknownDenied).toMatchObject({
+      allowed: false,
+      reason: "principal_not_in_management_scope",
+      audit: { decision: "deny" },
+    });
   });
 
   it("denies actions outside scope", () => {
