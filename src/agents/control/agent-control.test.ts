@@ -9,6 +9,7 @@ import {
   normalizeAgentControlRegistry,
   parseAgentControlRegistryJson,
   resolveAgentControlTarget,
+  validateAgentControlRegistryIntegrity,
   type AgentControlRegistry,
 } from "./agent-control.js";
 
@@ -110,6 +111,70 @@ describe("agent control registry", () => {
     expect(unsafeManagedPath.ok ? [] : unsafeManagedPath.errors.join("\n")).toContain(
       "managed file path must be relative",
     );
+  });
+
+  it("fails closed on registry integrity gaps before normalization", () => {
+    const duplicateId = parseAgentControlRegistryJson({
+      raw: JSON.stringify({
+        ...registry,
+        agents: [
+          { ...registry.agents[0], id: "Reese" },
+          { ...registry.agents[0], id: "reese" },
+        ],
+      }),
+      source: "agent-control.registry.json",
+    });
+    const emptyManagement = parseAgentControlRegistryJson({
+      raw: JSON.stringify({
+        ...registry,
+        agents: [
+          {
+            ...registry.agents[0],
+            management: { managers: [], managerTeams: [], actions: [] },
+          },
+        ],
+      }),
+      source: "agent-control.registry.json",
+    });
+    const suspiciousManagedPath = parseAgentControlRegistryJson({
+      raw: JSON.stringify({
+        ...registry,
+        agents: [
+          {
+            ...registry.agents[0],
+            workspace: {
+              ...registry.agents[0]!.workspace,
+              managedFiles: ["knowledge/../AGENTS.md"],
+            },
+          },
+        ],
+      }),
+      source: "agent-control.registry.json",
+    });
+
+    expect(duplicateId).toMatchObject({ ok: false });
+    expect(duplicateId.ok ? [] : duplicateId.errors.join("\n")).toContain("duplicate agent id");
+    expect(emptyManagement).toMatchObject({ ok: false });
+    expect(emptyManagement.ok ? [] : emptyManagement.errors.join("\n")).toContain(
+      "at least one manager or manager team is required",
+    );
+    expect(emptyManagement.ok ? [] : emptyManagement.errors.join("\n")).toContain(
+      "at least one action is required",
+    );
+    expect(suspiciousManagedPath).toMatchObject({ ok: false });
+    expect(suspiciousManagedPath.ok ? [] : suspiciousManagedPath.errors.join("\n")).toContain(
+      "must not contain parent directory segments",
+    );
+  });
+
+  it("exposes registry integrity checks for offline registry preflight", () => {
+    expect(validateAgentControlRegistryIntegrity(registry)).toEqual([]);
+    expect(
+      validateAgentControlRegistryIntegrity({
+        ...registry,
+        agents: [{ ...registry.agents[0]!, management: { actions: ["list"] } }],
+      }),
+    ).toEqual(["agents.0.management: at least one manager or manager team is required"]);
   });
 
   it("loads registry content through an injected file reader", async () => {
@@ -221,15 +286,39 @@ describe("agent control registry", () => {
 
     expect(statusPlan).toMatchObject({
       status: "planned",
+      executionMode: "dry_run",
       action: "readStatus",
       endpoint: { serviceName: "employee-agent-reese" },
       audit: { decision: "allow" },
     });
     expect(messagePlan).toMatchObject({
       status: "planned",
+      executionMode: "dry_run",
       action: "sendMessage",
       message: "status?",
       endpoint: { serviceName: "employee-agent-reese" },
+    });
+  });
+
+  it("carries sanitized audit correlation fields on inert operation plans", () => {
+    const plan = buildAgentControlOperationPlan({
+      registry,
+      principal: { agentId: "Artemis", teams: [], roles: ["manager"] },
+      request: { action: "readStatus", targetAgentId: "reese" },
+      now: new Date("2026-09-11T00:00:00.000Z"),
+      auditContext: {
+        requestId: " request-123 ",
+        sourceService: " agent-control-shadow-test ",
+      },
+    });
+
+    expect(plan).toMatchObject({
+      executionMode: "dry_run",
+      audit: {
+        executionMode: "dry_run",
+        requestId: "request-123",
+        sourceService: "agent-control-shadow-test",
+      },
     });
   });
 
@@ -278,10 +367,12 @@ describe("managed agent Markdown files", () => {
     });
 
     expect(plan.status).toBe("pending_review");
+    expect(plan.executionMode).toBe("dry_run");
     expect(plan.request.targetAgentId).toBe("reese");
     expect(plan.audit).toMatchObject({
       decision: "allow",
       action: "requestManagedFileUpdate",
+      executionMode: "dry_run",
     });
   });
 
@@ -299,6 +390,7 @@ describe("managed agent Markdown files", () => {
 
     expect(plan).toMatchObject({
       status: "planned",
+      executionMode: "dry_run",
       action: "readManagedFile",
       workspace: { root: "/srv/openclaw/agents/reese" },
       relativePath: "memory/today.md",
