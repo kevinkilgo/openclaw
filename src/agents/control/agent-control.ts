@@ -43,6 +43,22 @@ export type AgentControlScope = {
   actions: AgentControlAction[];
 };
 
+export type AgentControlFleetManagementScope = AgentControlScope & {
+  /** Explicit targets removed from the fleet-wide management grant. */
+  excludedAgentIds?: string[];
+};
+
+export type AgentControlUpchainCommunicationPolicy = {
+  /** Managerial agents allowed as upward communication targets, e.g. Artemis/Fiona. */
+  targetAgentIds: string[];
+  /** Explicit employee or subagent ids allowed to initiate upward communication. */
+  allowedSourceAgentIds?: string[];
+  /** Optional source owner-team allowlist for generated employee cohorts. */
+  allowedSourceOwnerTeams?: string[];
+  /** Upward actions start with message delivery only. */
+  actions: Extract<AgentControlAction, "sendMessage">[];
+};
+
 export type AgentControlRecord = {
   id: string;
   displayName?: string;
@@ -57,6 +73,10 @@ export type AgentControlRecord = {
 
 export type AgentControlRegistry = {
   version: 1;
+  /** Optional fleet-wide management policy for executives/managers such as Artemis/Fiona. */
+  fleetManagement?: AgentControlFleetManagementScope;
+  /** Strict allowlist for employee/subagent initiated communication up to Artemis/Fiona. */
+  upchainCommunication?: AgentControlUpchainCommunicationPolicy;
   agents: AgentControlRecord[];
 };
 
@@ -186,6 +206,19 @@ const AgentControlScopeSchema = z
   })
   .strict();
 
+const AgentControlFleetManagementScopeSchema = AgentControlScopeSchema.extend({
+  excludedAgentIds: z.array(z.string().trim().min(1)).optional(),
+}).strict();
+
+const AgentControlUpchainCommunicationPolicySchema = z
+  .object({
+    targetAgentIds: z.array(z.string().trim().min(1)),
+    allowedSourceAgentIds: z.array(z.string().trim().min(1)).optional(),
+    allowedSourceOwnerTeams: z.array(z.string().trim().min(1)).optional(),
+    actions: z.array(z.literal("sendMessage")),
+  })
+  .strict();
+
 const AgentControlRecordSchema = z
   .object({
     id: z.string().trim().min(1),
@@ -203,6 +236,8 @@ const AgentControlRecordSchema = z
 const AgentControlRegistrySchema = z
   .object({
     version: z.literal(1),
+    fleetManagement: AgentControlFleetManagementScopeSchema.optional(),
+    upchainCommunication: AgentControlUpchainCommunicationPolicySchema.optional(),
     agents: z.array(AgentControlRecordSchema),
   })
   .strict();
@@ -261,6 +296,46 @@ function normalizeActionSet(actions: readonly AgentControlAction[]): Set<AgentCo
   return normalized;
 }
 
+function normalizeManagementScope<T extends AgentControlScope>(
+  scope: T,
+): Omit<T, "managers" | "managerTeams" | "actions"> & AgentControlScope {
+  return {
+    ...scope,
+    managers: [...new Set((scope.managers ?? []).map(normalizeAgentId).filter(Boolean))],
+    managerTeams: [
+      ...new Set((scope.managerTeams ?? []).map((team) => team.trim()).filter(Boolean)),
+    ],
+    actions: [...normalizeActionSet(scope.actions)],
+  };
+}
+
+function normalizeFleetManagementScope(
+  scope: AgentControlFleetManagementScope,
+): AgentControlFleetManagementScope {
+  const normalized = normalizeManagementScope(scope);
+  return {
+    ...normalized,
+    excludedAgentIds: [
+      ...new Set((scope.excludedAgentIds ?? []).map(normalizeAgentId).filter(Boolean)),
+    ],
+  };
+}
+
+function normalizeUpchainCommunicationPolicy(
+  policy: AgentControlUpchainCommunicationPolicy,
+): AgentControlUpchainCommunicationPolicy {
+  return {
+    targetAgentIds: [...new Set(policy.targetAgentIds.map(normalizeAgentId).filter(Boolean))],
+    allowedSourceAgentIds: [
+      ...new Set((policy.allowedSourceAgentIds ?? []).map(normalizeAgentId).filter(Boolean)),
+    ],
+    allowedSourceOwnerTeams: [
+      ...new Set((policy.allowedSourceOwnerTeams ?? []).map((team) => team.trim()).filter(Boolean)),
+    ],
+    actions: [...new Set(policy.actions)],
+  };
+}
+
 export function normalizeAgentControlRecord(record: AgentControlRecord): AgentControlRecord {
   return {
     ...record,
@@ -268,15 +343,7 @@ export function normalizeAgentControlRecord(record: AgentControlRecord): AgentCo
     capabilities: [
       ...new Set(record.capabilities.map((capability) => capability.trim()).filter(Boolean)),
     ],
-    management: {
-      managers: [...new Set((record.management.managers ?? []).map(normalizeAgentId))],
-      managerTeams: [
-        ...new Set(
-          (record.management.managerTeams ?? []).map((team) => team.trim()).filter(Boolean),
-        ),
-      ],
-      actions: [...normalizeActionSet(record.management.actions)],
-    },
+    management: normalizeManagementScope(record.management),
     workspace: {
       ...record.workspace,
       managedFiles: [
@@ -300,7 +367,16 @@ export function normalizeAgentControlRegistry(
       byId.set(normalized.id, normalized);
     }
   }
-  return { version: 1, agents: [...byId.values()] };
+  return {
+    version: 1,
+    ...(registry.fleetManagement
+      ? { fleetManagement: normalizeFleetManagementScope(registry.fleetManagement) }
+      : {}),
+    ...(registry.upchainCommunication
+      ? { upchainCommunication: normalizeUpchainCommunicationPolicy(registry.upchainCommunication) }
+      : {}),
+    agents: [...byId.values()],
+  };
 }
 
 function containsParentDirectorySegment(input: string): boolean {
@@ -310,6 +386,43 @@ function containsParentDirectorySegment(input: string): boolean {
 export function validateAgentControlRegistryIntegrity(registry: AgentControlRegistry): string[] {
   const errors: string[] = [];
   const agentIndexesById = new Map<string, number>();
+
+  if (registry.fleetManagement) {
+    const managers = (registry.fleetManagement.managers ?? [])
+      .map(normalizeAgentId)
+      .filter(Boolean);
+    const managerTeams = (registry.fleetManagement.managerTeams ?? [])
+      .map((team) => team.trim())
+      .filter(Boolean);
+    if (managers.length === 0 && managerTeams.length === 0) {
+      errors.push("fleetManagement: at least one manager or manager team is required");
+    }
+    if (registry.fleetManagement.actions.length === 0) {
+      errors.push("fleetManagement.actions: at least one action is required");
+    }
+  }
+
+  if (registry.upchainCommunication) {
+    const policy = registry.upchainCommunication;
+    const targetAgentIds = policy.targetAgentIds.map(normalizeAgentId).filter(Boolean);
+    const allowedSourceAgentIds = (policy.allowedSourceAgentIds ?? [])
+      .map(normalizeAgentId)
+      .filter(Boolean);
+    const allowedSourceOwnerTeams = (policy.allowedSourceOwnerTeams ?? [])
+      .map((team) => team.trim())
+      .filter(Boolean);
+    if (targetAgentIds.length === 0) {
+      errors.push("upchainCommunication.targetAgentIds: at least one target is required");
+    }
+    if (allowedSourceAgentIds.length === 0 && allowedSourceOwnerTeams.length === 0) {
+      errors.push(
+        "upchainCommunication: at least one allowed source agent or owner team is required",
+      );
+    }
+    if (policy.actions.length === 0) {
+      errors.push("upchainCommunication.actions: at least one action is required");
+    }
+  }
 
   for (const [index, record] of registry.agents.entries()) {
     const normalizedId = normalizeAgentId(record.id);
@@ -343,6 +456,55 @@ export function validateAgentControlRegistryIntegrity(registry: AgentControlRegi
   }
 
   return errors;
+}
+
+function hasManagementGrant(scope: AgentControlScope, principal: AgentControlPrincipal): boolean {
+  const directGrant = (scope.managers ?? []).map(normalizeAgentId).includes(principal.agentId);
+  const teamGrant = (scope.managerTeams ?? []).some((team) => principal.teams.includes(team));
+  return directGrant || teamGrant;
+}
+
+function hasFleetManagementGrant(params: {
+  registry: AgentControlRegistry;
+  principal: AgentControlPrincipal;
+  targetAgentId: string;
+  action: AgentControlAction;
+}): boolean {
+  const fleetManagement = normalizeAgentControlRegistry(params.registry).fleetManagement;
+  if (!fleetManagement) {
+    return false;
+  }
+  if ((fleetManagement.excludedAgentIds ?? []).includes(normalizeAgentId(params.targetAgentId))) {
+    return false;
+  }
+  return (
+    hasManagementGrant(fleetManagement, params.principal) &&
+    normalizeActionSet(fleetManagement.actions).has(params.action)
+  );
+}
+
+function hasUpchainCommunicationGrant(params: {
+  registry: AgentControlRegistry;
+  principal: AgentControlPrincipal;
+  targetAgentId: string;
+  action: AgentControlAction;
+}): boolean {
+  if (params.action !== "sendMessage") {
+    return false;
+  }
+  const registry = normalizeAgentControlRegistry(params.registry);
+  const policy = registry.upchainCommunication;
+  if (!policy || !policy.targetAgentIds.includes(normalizeAgentId(params.targetAgentId))) {
+    return false;
+  }
+  const source = resolveAgentControlRecord(registry, params.principal.agentId);
+  if (!source) {
+    return false;
+  }
+  return (
+    (policy.allowedSourceAgentIds ?? []).includes(source.id) ||
+    (policy.allowedSourceOwnerTeams ?? []).includes(source.ownerTeam)
+  );
 }
 
 export function parseAgentControlRegistryJson(params: {
@@ -415,15 +577,26 @@ export function authorizeAgentControlAction(params: {
 
   if (target) {
     const actions = normalizeActionSet(target.management.actions);
-    const directGrant = (target.management.managers ?? [])
-      .map(normalizeAgentId)
-      .includes(principal.agentId);
-    const teamGrant = (target.management.managerTeams ?? []).some((team) =>
-      principal.teams.includes(team),
-    );
+    const scopedGrant = hasManagementGrant(target.management, principal);
+    const fleetGrant = hasFleetManagementGrant({
+      registry: params.registry,
+      principal,
+      targetAgentId: params.targetAgentId,
+      action: params.action,
+    });
+    const upchainGrant = hasUpchainCommunicationGrant({
+      registry: params.registry,
+      principal,
+      targetAgentId: params.targetAgentId,
+      action: params.action,
+    });
     const actionGrant = actions.has(params.action);
-    allowed = (directGrant || teamGrant) && actionGrant;
-    if (!directGrant && !teamGrant) {
+    allowed = fleetGrant || upchainGrant || (scopedGrant && actionGrant);
+    if (fleetGrant) {
+      reason = "allowed_by_fleet_management_scope";
+    } else if (upchainGrant) {
+      reason = "allowed_by_upchain_communication_allowlist";
+    } else if (!scopedGrant) {
       reason = "principal_not_in_management_scope";
     } else if (!actionGrant) {
       reason = "action_not_allowed";
