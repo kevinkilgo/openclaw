@@ -74,6 +74,17 @@ export type AgentControlResolution = {
   authorizedAction: AgentControlAction;
 };
 
+export type AgentControlExecutionMode = "dry_run";
+
+export type AgentControlAuditContext = {
+  /** Caller-provided correlation id for durable audit appenders. */
+  requestId?: string;
+  /** Trusted internal service identity that submitted the request. */
+  sourceService?: string;
+  /** Source-only plans are inert until a later approved runtime adapter consumes them. */
+  executionMode?: AgentControlExecutionMode;
+};
+
 export type AgentControlAuditEvent = {
   type: "agent-control.authorization";
   at: string;
@@ -82,6 +93,9 @@ export type AgentControlAuditEvent = {
   action: AgentControlAction;
   decision: "allow" | "deny";
   reason: string;
+  executionMode: AgentControlExecutionMode;
+  requestId?: string;
+  sourceService?: string;
 };
 
 export type ManagedFileUpdateRequest = {
@@ -98,6 +112,7 @@ export type AgentControlOperationRequest =
 
 export type AgentControlOperationPlan = {
   status: "planned";
+  executionMode: AgentControlExecutionMode;
   action: AgentControlOperationRequest["action"];
   target: AgentControlRecord;
   audit: AgentControlAuditEvent;
@@ -226,6 +241,16 @@ function normalizePrincipal(principal: AgentControlPrincipal): AgentControlPrinc
   };
 }
 
+function normalizeAuditContext(context?: AgentControlAuditContext): AgentControlAuditContext {
+  const requestId = context?.requestId?.trim();
+  const sourceService = context?.sourceService?.trim();
+  return {
+    executionMode: "dry_run",
+    ...(requestId ? { requestId } : {}),
+    ...(sourceService ? { sourceService } : {}),
+  };
+}
+
 function normalizeActionSet(actions: readonly AgentControlAction[]): Set<AgentControlAction> {
   const normalized = new Set<AgentControlAction>();
   for (const action of actions) {
@@ -278,6 +303,48 @@ export function normalizeAgentControlRegistry(
   return { version: 1, agents: [...byId.values()] };
 }
 
+function containsParentDirectorySegment(input: string): boolean {
+  return input.replaceAll("\\", "/").split("/").includes("..");
+}
+
+export function validateAgentControlRegistryIntegrity(registry: AgentControlRegistry): string[] {
+  const errors: string[] = [];
+  const agentIndexesById = new Map<string, number>();
+
+  for (const [index, record] of registry.agents.entries()) {
+    const normalizedId = normalizeAgentId(record.id);
+    const existingIndex = agentIndexesById.get(normalizedId);
+    if (existingIndex !== undefined) {
+      errors.push(
+        `agents.${index}.id: duplicate agent id "${normalizedId}" already declared at agents.${existingIndex}.id`,
+      );
+    } else {
+      agentIndexesById.set(normalizedId, index);
+    }
+
+    const managers = (record.management.managers ?? []).map(normalizeAgentId).filter(Boolean);
+    const managerTeams = (record.management.managerTeams ?? [])
+      .map((team) => team.trim())
+      .filter(Boolean);
+    if (managers.length === 0 && managerTeams.length === 0) {
+      errors.push(`agents.${index}.management: at least one manager or manager team is required`);
+    }
+    if (record.management.actions.length === 0) {
+      errors.push(`agents.${index}.management.actions: at least one action is required`);
+    }
+
+    for (const [managedFileIndex, managedFile] of record.workspace.managedFiles.entries()) {
+      if (containsParentDirectorySegment(managedFile)) {
+        errors.push(
+          `agents.${index}.workspace.managedFiles.${managedFileIndex}: managed file path must not contain parent directory segments`,
+        );
+      }
+    }
+  }
+
+  return errors;
+}
+
 export function parseAgentControlRegistryJson(params: {
   raw: string;
   source?: string;
@@ -299,6 +366,11 @@ export function parseAgentControlRegistryJson(params: {
   const result = AgentControlRegistrySchema.safeParse(parsed);
   if (!result.success) {
     return { ok: false, errors: formatRegistryParseIssues(result.error.issues) };
+  }
+
+  const integrityErrors = validateAgentControlRegistryIntegrity(result.data);
+  if (integrityErrors.length > 0) {
+    return { ok: false, errors: integrityErrors };
   }
 
   return { ok: true, registry: normalizeAgentControlRegistry(result.data) };
@@ -333,8 +405,10 @@ export function authorizeAgentControlAction(params: {
   targetAgentId: string;
   action: AgentControlAction;
   now?: Date;
+  auditContext?: AgentControlAuditContext;
 }): { allowed: boolean; reason: string; audit: AgentControlAuditEvent } {
   const principal = normalizePrincipal(params.principal);
+  const auditContext = normalizeAuditContext(params.auditContext);
   const target = resolveAgentControlRecord(params.registry, params.targetAgentId);
   let allowed = false;
   let reason = "target_not_found";
@@ -369,6 +443,9 @@ export function authorizeAgentControlAction(params: {
       action: params.action,
       decision: allowed ? "allow" : "deny",
       reason,
+      executionMode: auditContext.executionMode ?? "dry_run",
+      ...(auditContext.requestId ? { requestId: auditContext.requestId } : {}),
+      ...(auditContext.sourceService ? { sourceService: auditContext.sourceService } : {}),
     },
   };
 }
@@ -440,8 +517,10 @@ export function buildManagedFileUpdatePlan(params: {
   principal: AgentControlPrincipal;
   request: ManagedFileUpdateRequest;
   now?: Date;
+  auditContext?: AgentControlAuditContext;
 }): {
   status: "pending_review";
+  executionMode: AgentControlExecutionMode;
   request: ManagedFileUpdateRequest;
   target: AgentControlRecord;
   audit: AgentControlAuditEvent;
@@ -456,6 +535,7 @@ export function buildManagedFileUpdatePlan(params: {
     targetAgentId: params.request.targetAgentId,
     action: "requestManagedFileUpdate",
     now: params.now,
+    auditContext: params.auditContext,
   });
   if (!authorization.allowed) {
     throw new Error(`Managed file update denied: ${authorization.reason}`);
@@ -465,6 +545,7 @@ export function buildManagedFileUpdatePlan(params: {
   }
   return {
     status: "pending_review",
+    executionMode: "dry_run",
     request: {
       ...params.request,
       targetAgentId: normalizeAgentId(params.request.targetAgentId),
@@ -480,6 +561,7 @@ export function buildAgentControlOperationPlan(params: {
   principal: AgentControlPrincipal;
   request: AgentControlOperationRequest;
   now?: Date;
+  auditContext?: AgentControlAuditContext;
 }): AgentControlOperationPlan {
   const target = resolveAgentControlRecord(params.registry, params.request.targetAgentId);
   if (!target) {
@@ -492,6 +574,7 @@ export function buildAgentControlOperationPlan(params: {
     targetAgentId: params.request.targetAgentId,
     action: params.request.action,
     now: params.now,
+    auditContext: params.auditContext,
   });
   if (!authorization.allowed) {
     throw new Error(`Agent control operation denied: ${authorization.reason}`);
@@ -505,6 +588,7 @@ export function buildAgentControlOperationPlan(params: {
     }
     return {
       status: "planned",
+      executionMode: "dry_run",
       action: params.request.action,
       target,
       workspace: target.workspace,
@@ -520,6 +604,7 @@ export function buildAgentControlOperationPlan(params: {
     }
     return {
       status: "planned",
+      executionMode: "dry_run",
       action: params.request.action,
       target,
       endpoint: target.endpoint,
@@ -530,6 +615,7 @@ export function buildAgentControlOperationPlan(params: {
 
   return {
     status: "planned",
+    executionMode: "dry_run",
     action: params.request.action,
     target,
     endpoint: target.endpoint,
