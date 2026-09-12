@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   authorizeAgentControlAction,
+  buildAgentControlOperationPlan,
   buildManagedFileUpdatePlan,
   isManagedAgentMarkdownFile,
   listManageableAgents,
@@ -203,6 +204,44 @@ describe("agent control registry", () => {
       workspace: { root: "/srv/openclaw/agents/reese" },
     });
   });
+
+  it("plans authorized status and message operations without executing them", () => {
+    const statusPlan = buildAgentControlOperationPlan({
+      registry,
+      principal: { agentId: "Artemis", teams: [], roles: ["manager"] },
+      request: { action: "readStatus", targetAgentId: "reese" },
+      now: new Date("2026-09-11T00:00:00.000Z"),
+    });
+    const messagePlan = buildAgentControlOperationPlan({
+      registry,
+      principal: { agentId: "Artemis", teams: [], roles: ["manager"] },
+      request: { action: "sendMessage", targetAgentId: "reese", message: "  status?  " },
+      now: new Date("2026-09-11T00:00:00.000Z"),
+    });
+
+    expect(statusPlan).toMatchObject({
+      status: "planned",
+      action: "readStatus",
+      endpoint: { serviceName: "employee-agent-reese" },
+      audit: { decision: "allow" },
+    });
+    expect(messagePlan).toMatchObject({
+      status: "planned",
+      action: "sendMessage",
+      message: "status?",
+      endpoint: { serviceName: "employee-agent-reese" },
+    });
+  });
+
+  it("rejects empty planned messages before any live operation can be wired", () => {
+    expect(() =>
+      buildAgentControlOperationPlan({
+        registry,
+        principal: { agentId: "Artemis", teams: [], roles: ["manager"] },
+        request: { action: "sendMessage", targetAgentId: "reese", message: "  " },
+      }),
+    ).toThrow("empty message");
+  });
 });
 
 describe("managed agent Markdown files", () => {
@@ -244,5 +283,33 @@ describe("managed agent Markdown files", () => {
       decision: "allow",
       action: "requestManagedFileUpdate",
     });
+  });
+
+  it("plans managed file reads only for declared Markdown paths", () => {
+    const plan = buildAgentControlOperationPlan({
+      registry,
+      principal: { agentId: "Artemis", teams: [], roles: ["manager"] },
+      request: {
+        action: "readManagedFile",
+        targetAgentId: "reese",
+        relativePath: "memory/today.md",
+      },
+      now: new Date("2026-09-11T00:00:00.000Z"),
+    });
+
+    expect(plan).toMatchObject({
+      status: "planned",
+      action: "readManagedFile",
+      workspace: { root: "/srv/openclaw/agents/reese" },
+      relativePath: "memory/today.md",
+      audit: { decision: "allow" },
+    });
+    expect(() =>
+      buildAgentControlOperationPlan({
+        registry,
+        principal: { agentId: "Artemis", teams: [], roles: ["manager"] },
+        request: { action: "readManagedFile", targetAgentId: "reese", relativePath: "secrets.md" },
+      }),
+    ).toThrow("unmanaged path");
   });
 });
