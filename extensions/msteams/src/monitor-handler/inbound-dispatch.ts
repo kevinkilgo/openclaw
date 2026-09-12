@@ -1,5 +1,6 @@
 // Msteams plugin module dispatches prepared inbound turns and owns reply lifecycle handling.
 import { readFile } from "node:fs/promises";
+import { setTimeout as sleep } from "node:timers/promises";
 import {
   createChannelInboundEnvelopeBuilder,
   hasFinalInboundReplyDispatch,
@@ -50,6 +51,9 @@ type GatewayAgentWaitResult = {
     text?: string;
   };
 };
+
+const EMPLOYEE_CONTAINER_SESSION_CLAIM_RETRY_ATTEMPTS = 3;
+const EMPLOYEE_CONTAINER_SESSION_CLAIM_RETRY_DELAY_MS = 1_000;
 
 type TeamsLoginDeviceCode = {
   title: string;
@@ -322,41 +326,71 @@ async function dispatchViaEmployeeContainer(params: {
   const idempotencyKey = `msteams-employee-container:${params.routeAgentId}:${
     params.messageId ?? sessionKey
   }`;
-  params.log.info("dispatching msteams turn to employee container", {
-    routeAgentId: params.routeAgentId,
-    employeeAgentId,
-    sessionKey,
-  });
-  const accepted = (await callGatewayFromCli(
-    "agent",
-    { url, token, timeout: String(waitTimeoutMs) },
-    {
-      agentId: employeeAgentId,
+  let waitResult: GatewayAgentWaitResult | undefined;
+  for (let attempt = 1; attempt <= EMPLOYEE_CONTAINER_SESSION_CLAIM_RETRY_ATTEMPTS; attempt += 1) {
+    params.log.info("dispatching msteams turn to employee container", {
+      routeAgentId: params.routeAgentId,
+      employeeAgentId,
       sessionKey,
-      message: params.message,
-      idempotencyKey,
-      deliver: false,
-      timeout: Math.ceil(waitTimeoutMs / 1000),
-      sourceReplyDeliveryMode: "automatic",
-    },
-    { scopes: ["operator.write"] },
-  )) as GatewayAgentAccepted;
-  if (!accepted.runId) {
-    throw new Error("employee container agent run did not return a runId");
+      attempt,
+    });
+    try {
+      const accepted = (await callGatewayFromCli(
+        "agent",
+        { url, token, timeout: String(waitTimeoutMs) },
+        {
+          agentId: employeeAgentId,
+          sessionKey,
+          message: params.message,
+          idempotencyKey,
+          deliver: false,
+          timeout: Math.ceil(waitTimeoutMs / 1000),
+          sourceReplyDeliveryMode: "automatic",
+        },
+        { scopes: ["operator.write"], deviceIdentity: null },
+      )) as GatewayAgentAccepted;
+      if (!accepted.runId) {
+        throw new Error("employee container agent run did not return a runId");
+      }
+      waitResult = (await callGatewayFromCli(
+        "agent.wait",
+        { url, token, timeout: String(waitTimeoutMs + 10_000) },
+        { runId: accepted.runId, timeoutMs: waitTimeoutMs },
+        { scopes: ["operator.write"], deviceIdentity: null },
+      )) as GatewayAgentWaitResult;
+      if (waitResult.status === "ok") {
+        break;
+      }
+      const errorDetail = waitResult.error?.trim();
+      throw new Error(
+        `employee container agent run ended with status ${waitResult.status ?? "unknown"}${
+          errorDetail ? `: ${errorDetail}` : ""
+        }`,
+      );
+    } catch (err) {
+      if (
+        attempt < EMPLOYEE_CONTAINER_SESSION_CLAIM_RETRY_ATTEMPTS &&
+        isRetryableEmployeeContainerSessionClaimError(err)
+      ) {
+        const retryLog =
+          typeof params.log.warn === "function"
+            ? params.log.warn.bind(params.log)
+            : params.log.info;
+        retryLog("retrying msteams employee container dispatch after session claim race", {
+          routeAgentId: params.routeAgentId,
+          employeeAgentId,
+          sessionKey,
+          attempt,
+          error: formatUnknownError(err),
+        });
+        await sleep(EMPLOYEE_CONTAINER_SESSION_CLAIM_RETRY_DELAY_MS * attempt);
+        continue;
+      }
+      throw err;
+    }
   }
-  const waitResult = (await callGatewayFromCli(
-    "agent.wait",
-    { url, token, timeout: String(waitTimeoutMs + 10_000) },
-    { runId: accepted.runId, timeoutMs: waitTimeoutMs },
-    { scopes: ["operator.write"] },
-  )) as GatewayAgentWaitResult;
-  if (waitResult.status !== "ok") {
-    const errorDetail = waitResult.error?.trim();
-    throw new Error(
-      `employee container agent run ended with status ${waitResult.status ?? "unknown"}${
-        errorDetail ? `: ${errorDetail}` : ""
-      }`,
-    );
+  if (!waitResult || waitResult.status !== "ok") {
+    throw new Error("employee container agent run did not complete");
   }
   const text = waitResult.terminalReply?.text?.trim();
   if (!text) {
@@ -370,6 +404,25 @@ async function dispatchViaEmployeeContainer(params: {
   await params.settleDelivery?.();
   await result?.finalization;
   return { kind: "completed", finalResponses: 1 };
+}
+
+function isRetryableEmployeeContainerSessionClaimError(err: unknown): boolean {
+  const text = formatUnknownError(err);
+  return /Session ".+" changed while starting work\. Retry\./u.test(text);
+}
+
+function formatEmployeeContainerDispatchError(params: {
+  routeAgentId: string;
+  routeSessionKey: string;
+  err: unknown;
+}): string {
+  const employeeSessionKey = resolveEmployeeContainerSessionKey(
+    params.routeAgentId,
+    params.routeSessionKey,
+  );
+  return `msteams employee container dispatch failed routeAgentId=${
+    params.routeAgentId
+  } employeeSessionKey=${employeeSessionKey}: ${formatUnknownError(params.err)}`;
 }
 
 export async function dispatchMSTeamsInboundTurn(params: {
@@ -676,9 +729,16 @@ export async function dispatchMSTeamsInboundTurn(params: {
       }
       log.error("msteams employee container dispatch failed", {
         routeAgentId: route.agentId,
+        employeeSessionKey: resolveEmployeeContainerSessionKey(route.agentId, route.sessionKey),
         error: formatUnknownError(err),
       });
-      runtime.error(`msteams employee container dispatch failed: ${formatUnknownError(err)}`);
+      runtime.error(
+        formatEmployeeContainerDispatchError({
+          routeAgentId: route.agentId,
+          routeSessionKey: route.sessionKey,
+          err,
+        }),
+      );
       throw err;
     }
   }
