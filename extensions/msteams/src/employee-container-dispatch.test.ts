@@ -236,6 +236,46 @@ describe("msteams employee container dispatch", () => {
     expect(runtime.error).not.toHaveBeenCalled();
   });
 
+  it("retries a Teams employee dispatch when session start admission races", async () => {
+    gatewayRuntimeMockState.callGatewayFromCli.mockReset();
+    gatewayRuntimeMockState.callGatewayFromCli
+      .mockRejectedValueOnce(
+        new Error(
+          'Session "agent:main:msteams:direct:user-aad" changed while starting work. Retry.',
+        ),
+      )
+      .mockResolvedValueOnce({ runId: "run-2" })
+      .mockResolvedValueOnce({
+        status: "ok",
+        terminalReply: { text: "Recovered reply" },
+      });
+    const cfg = createConfig();
+    const runtime = { error: vi.fn() } as unknown as RuntimeEnv;
+    const handler = createMSTeamsMessageHandler(createMSTeamsMessageHandlerDeps({ cfg, runtime }));
+
+    await handler(createContext());
+
+    expect(gatewayRuntimeMockState.callGatewayFromCli).toHaveBeenCalledTimes(3);
+    expect(gatewayRuntimeMockState.callGatewayFromCli).toHaveBeenNthCalledWith(
+      2,
+      "agent",
+      expect.objectContaining({
+        url: "ws://employee-agent-kkilgo:18789",
+        token: "test-token",
+      }),
+      expect.objectContaining({
+        agentId: "main",
+        sessionKey: "agent:main:msteams:direct:user-aad",
+      }),
+      { scopes: ["operator.write"], deviceIdentity: null },
+    );
+    expect(replyDispatcherMockState.deliver).toHaveBeenCalledWith(
+      { text: "Recovered reply" },
+      expect.objectContaining({ kind: "final", stage: "final" }),
+    );
+    expect(runtime.error).not.toHaveBeenCalled();
+  });
+
   it("starts Codex device-code login when agent.wait returns an OpenAI auth error status", async () => {
     gatewayRuntimeMockState.callGatewayFromCli.mockReset();
     gatewayRuntimeMockState.callGatewayFromCli
@@ -287,6 +327,10 @@ describe("msteams employee container dispatch", () => {
     );
     expect(runtime.error).toHaveBeenCalledWith(
       expect.stringContaining("msteams employee container dispatch failed"),
+    );
+    expect(runtime.error).toHaveBeenCalledWith(expect.stringContaining("routeAgentId=kkilgo"));
+    expect(runtime.error).toHaveBeenCalledWith(
+      expect.stringContaining("employeeSessionKey=agent:main:msteams:direct:user-aad"),
     );
   });
 });
