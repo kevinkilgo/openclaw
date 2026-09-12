@@ -80,6 +80,59 @@ export type AgentControlRegistry = {
   agents: AgentControlRecord[];
 };
 
+export type AgentControlRegistrySnapshotDefaults = {
+  ownerTeam: string;
+  role: string;
+  status: AgentControlStatus;
+  endpointBasePath?: string;
+  endpointNetworks?: string[];
+  workspaceRootPrefix: string;
+  managedFiles: string[];
+  capabilities: string[];
+  management: AgentControlScope;
+};
+
+export type AgentControlRegistrySnapshotSource = {
+  agentId: string;
+  displayName?: string;
+  serviceName: string;
+  ownerTeam?: string;
+  role?: string;
+  status?: AgentControlStatus;
+  workspaceRoot?: string;
+  managedFiles?: string[];
+  capabilities?: string[];
+  management?: AgentControlScope;
+};
+
+export type AgentControlRegistrySnapshotPlan = {
+  status: "planned";
+  executionMode: AgentControlExecutionMode;
+  registry: AgentControlRegistry;
+  sourceCount: number;
+  normalizedAgentIds: string[];
+};
+
+export type AgentControlRegistrySnapshotSummary = {
+  totalAgents: number;
+  statusCounts: Record<AgentControlStatus, number>;
+  ownerTeamCounts: Record<string, number>;
+  roleCounts: Record<string, number>;
+  capabilityCounts: Record<string, number>;
+  managementActionCounts: Record<AgentControlAction, number>;
+  fleetManagementEnabled: boolean;
+  upchainCommunicationEnabled: boolean;
+};
+
+export type AgentControlRegistrySnapshotArtifact = {
+  version: 1;
+  snapshotVersion: 1;
+  generatedAt: string;
+  source?: string;
+  plan: AgentControlRegistrySnapshotPlan;
+  summary: AgentControlRegistrySnapshotSummary;
+};
+
 export type AgentControlPrincipal = {
   agentId: string;
   teams: string[];
@@ -144,6 +197,10 @@ export type AgentControlOperationPlan = {
 
 export type AgentControlRegistryParseResult =
   | { ok: true; registry: AgentControlRegistry }
+  | { ok: false; errors: string[] };
+
+export type AgentControlRegistrySnapshotParseResult =
+  | { ok: true; snapshot: AgentControlRegistrySnapshotArtifact }
   | { ok: false; errors: string[] };
 
 export type AgentControlRegistryFileReader = (
@@ -242,11 +299,106 @@ const AgentControlRegistrySchema = z
   })
   .strict();
 
+const AgentControlRegistrySnapshotPlanSchema = z
+  .object({
+    status: z.literal("planned"),
+    executionMode: z.literal("dry_run"),
+    registry: AgentControlRegistrySchema,
+    sourceCount: z.number().int().nonnegative(),
+    normalizedAgentIds: z.array(z.string().trim().min(1)),
+  })
+  .strict();
+
+const AgentControlRegistrySnapshotSummarySchema = z
+  .object({
+    totalAgents: z.number().int().nonnegative(),
+    statusCounts: z.record(z.enum(AGENT_CONTROL_STATUSES), z.number().int().nonnegative()),
+    ownerTeamCounts: z.record(z.string().trim().min(1), z.number().int().nonnegative()),
+    roleCounts: z.record(z.string().trim().min(1), z.number().int().nonnegative()),
+    capabilityCounts: z.record(z.string().trim().min(1), z.number().int().nonnegative()),
+    managementActionCounts: z.record(z.enum(AGENT_CONTROL_ACTIONS), z.number().int().nonnegative()),
+    fleetManagementEnabled: z.boolean(),
+    upchainCommunicationEnabled: z.boolean(),
+  })
+  .strict();
+
+const ISO_INSTANT_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+const AgentControlRegistrySnapshotArtifactSchema = z
+  .object({
+    version: z.literal(1),
+    snapshotVersion: z.literal(1),
+    generatedAt: z.string().regex(ISO_INSTANT_PATTERN, "generatedAt must be an ISO instant"),
+    source: z.string().trim().min(1).optional(),
+    plan: AgentControlRegistrySnapshotPlanSchema,
+    summary: AgentControlRegistrySnapshotSummarySchema,
+  })
+  .strict()
+  .superRefine((snapshot, ctx) => {
+    const registryErrors = validateAgentControlRegistryIntegrity(snapshot.plan.registry);
+    for (const error of registryErrors) {
+      ctx.addIssue({ code: "custom", path: ["plan", "registry"], message: error });
+    }
+
+    const expectedAgentIds = normalizeAgentControlRegistry(snapshot.plan.registry)
+      .agents.map((agent) => agent.id)
+      .sort((left, right) => left.localeCompare(right));
+    if (snapshot.plan.sourceCount !== snapshot.plan.registry.agents.length) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["plan", "sourceCount"],
+        message: "sourceCount must match registry agents length",
+      });
+    }
+    if (snapshot.plan.normalizedAgentIds.join("\n") !== expectedAgentIds.join("\n")) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["plan", "normalizedAgentIds"],
+        message: "normalizedAgentIds must match sorted normalized registry ids",
+      });
+    }
+    if (snapshot.summary.totalAgents !== snapshot.plan.registry.agents.length) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["summary", "totalAgents"],
+        message: "totalAgents must match registry agents length",
+      });
+    }
+  });
+
 function formatRegistryParseIssues(issues: readonly z.core.$ZodIssue[]): string[] {
   return issues.map((issue) => {
     const location = issue.path.length > 0 ? issue.path.join(".") : "registry";
     return `${location}: ${issue.message}`;
   });
+}
+
+function sortStrings(values: readonly string[]): string[] {
+  return [...values].sort((left, right) => left.localeCompare(right));
+}
+
+function incrementCount<T extends string>(counts: Record<T, number>, key: T): void {
+  counts[key] = (counts[key] ?? 0) + 1;
+}
+
+function sortCountRecord<T extends string>(counts: Record<T, number>): Record<T, number> {
+  return Object.fromEntries(
+    Object.entries(counts).sort(([left], [right]) => left.localeCompare(right)),
+  ) as Record<T, number>;
+}
+
+function emptyStatusCounts(): Record<AgentControlStatus, number> {
+  return Object.fromEntries(AGENT_CONTROL_STATUSES.map((status) => [status, 0])) as Record<
+    AgentControlStatus,
+    number
+  >;
+}
+
+function emptyActionCounts(): Record<AgentControlAction, number> {
+  return Object.fromEntries(AGENT_CONTROL_ACTIONS.map((action) => [action, 0])) as Record<
+    AgentControlAction,
+    number
+  >;
 }
 
 function normalizeRelativePath(input: string): string | undefined {
@@ -307,6 +459,17 @@ function normalizeManagementScope<T extends AgentControlScope>(
     ],
     actions: [...normalizeActionSet(scope.actions)],
   };
+}
+
+function mergeActions(
+  base: readonly AgentControlAction[],
+  overrides?: readonly AgentControlAction[],
+): AgentControlAction[] {
+  return [...normalizeActionSet([...(overrides ?? base)])];
+}
+
+function buildWorkspaceRoot(params: { workspaceRootPrefix: string; agentId: string }): string {
+  return path.posix.join(params.workspaceRootPrefix.replaceAll("\\", "/"), params.agentId);
 }
 
 function normalizeFleetManagementScope(
@@ -551,6 +714,173 @@ export async function loadAgentControlRegistryFile(params: {
     );
   }
   return result.registry;
+}
+
+export function buildAgentControlRegistrySnapshot(params: {
+  sources: AgentControlRegistrySnapshotSource[];
+  defaults: AgentControlRegistrySnapshotDefaults;
+  fleetManagement?: AgentControlFleetManagementScope;
+  upchainCommunication?: AgentControlUpchainCommunicationPolicy;
+}): AgentControlRegistrySnapshotPlan {
+  const agents = params.sources
+    .map((source) => {
+      const agentId = normalizeAgentId(source.agentId);
+      if (!agentId) {
+        throw new Error("Agent control registry snapshot denied: empty source agent id");
+      }
+      const serviceName = source.serviceName.trim();
+      if (!serviceName) {
+        throw new Error(`Agent control registry snapshot denied: ${agentId} missing service name`);
+      }
+      const management = normalizeManagementScope(source.management ?? params.defaults.management);
+      const managedFiles = source.managedFiles ?? params.defaults.managedFiles;
+      const capabilities = source.capabilities ?? params.defaults.capabilities;
+
+      return {
+        id: agentId,
+        ...(source.displayName?.trim() ? { displayName: source.displayName.trim() } : {}),
+        ownerTeam: source.ownerTeam?.trim() || params.defaults.ownerTeam,
+        role: source.role?.trim() || params.defaults.role,
+        status: source.status ?? params.defaults.status,
+        endpoint: {
+          serviceName,
+          ...(params.defaults.endpointBasePath
+            ? { basePath: params.defaults.endpointBasePath }
+            : {}),
+          ...(params.defaults.endpointNetworks
+            ? { networks: params.defaults.endpointNetworks }
+            : {}),
+        },
+        workspace: {
+          root:
+            source.workspaceRoot ??
+            buildWorkspaceRoot({
+              workspaceRootPrefix: params.defaults.workspaceRootPrefix,
+              agentId,
+            }),
+          managedFiles,
+        },
+        capabilities,
+        management: {
+          ...management,
+          actions: mergeActions(params.defaults.management.actions, source.management?.actions),
+        },
+      } satisfies AgentControlRecord;
+    })
+    .sort((left, right) => left.id.localeCompare(right.id));
+
+  const registry: AgentControlRegistry = {
+    version: 1,
+    ...(params.fleetManagement ? { fleetManagement: params.fleetManagement } : {}),
+    ...(params.upchainCommunication ? { upchainCommunication: params.upchainCommunication } : {}),
+    agents,
+  };
+  const errors = validateAgentControlRegistryIntegrity(registry);
+  if (errors.length > 0) {
+    throw new Error(`Invalid agent control registry snapshot: ${errors.join("; ")}`);
+  }
+  const normalized = normalizeAgentControlRegistry(registry);
+  return {
+    status: "planned",
+    executionMode: "dry_run",
+    registry: normalized,
+    sourceCount: params.sources.length,
+    normalizedAgentIds: normalized.agents.map((agent) => agent.id),
+  };
+}
+
+function summarizeAgentControlRegistrySnapshotPlan(
+  plan: AgentControlRegistrySnapshotPlan,
+): AgentControlRegistrySnapshotSummary {
+  const statusCounts = emptyStatusCounts();
+  const ownerTeamCounts: Record<string, number> = {};
+  const roleCounts: Record<string, number> = {};
+  const capabilityCounts: Record<string, number> = {};
+  const managementActionCounts = emptyActionCounts();
+
+  for (const agent of plan.registry.agents) {
+    incrementCount(statusCounts, agent.status);
+    incrementCount(ownerTeamCounts, agent.ownerTeam);
+    incrementCount(roleCounts, agent.role);
+    for (const capability of sortStrings(agent.capabilities)) {
+      incrementCount(capabilityCounts, capability);
+    }
+    for (const action of agent.management.actions) {
+      incrementCount(managementActionCounts, action);
+    }
+  }
+
+  return {
+    totalAgents: plan.registry.agents.length,
+    statusCounts,
+    ownerTeamCounts: sortCountRecord(ownerTeamCounts),
+    roleCounts: sortCountRecord(roleCounts),
+    capabilityCounts: sortCountRecord(capabilityCounts),
+    managementActionCounts,
+    fleetManagementEnabled: plan.registry.fleetManagement !== undefined,
+    upchainCommunicationEnabled: plan.registry.upchainCommunication !== undefined,
+  };
+}
+
+export function buildAgentControlRegistrySnapshotArtifact(params: {
+  snapshot: AgentControlRegistrySnapshotPlan;
+  generatedAt?: Date;
+  source?: string;
+}): AgentControlRegistrySnapshotArtifact {
+  const source = params.source?.trim();
+  const artifact: AgentControlRegistrySnapshotArtifact = {
+    version: 1,
+    snapshotVersion: 1,
+    generatedAt: (params.generatedAt ?? new Date()).toISOString(),
+    ...(source ? { source } : {}),
+    plan: params.snapshot,
+    summary: summarizeAgentControlRegistrySnapshotPlan(params.snapshot),
+  };
+  const result = AgentControlRegistrySnapshotArtifactSchema.safeParse(artifact);
+  if (!result.success) {
+    throw new Error(
+      `Invalid agent control registry snapshot artifact: ${formatRegistryParseIssues(result.error.issues).join("; ")}`,
+    );
+  }
+  return result.data;
+}
+
+export function parseAgentControlRegistrySnapshotJson(params: {
+  raw: string;
+  source?: string;
+}): AgentControlRegistrySnapshotParseResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(params.raw);
+  } catch (error) {
+    return {
+      ok: false,
+      errors: [
+        `${params.source ?? "agent-control registry snapshot"}: invalid JSON: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      ],
+    };
+  }
+
+  const result = AgentControlRegistrySnapshotArtifactSchema.safeParse(parsed);
+  if (!result.success) {
+    return { ok: false, errors: formatRegistryParseIssues(result.error.issues) };
+  }
+
+  return { ok: true, snapshot: result.data };
+}
+
+export function serializeAgentControlRegistrySnapshot(
+  snapshot: AgentControlRegistrySnapshotArtifact,
+): string {
+  const result = AgentControlRegistrySnapshotArtifactSchema.safeParse(snapshot);
+  if (!result.success) {
+    throw new Error(
+      `Invalid agent control registry snapshot artifact: ${formatRegistryParseIssues(result.error.issues).join("; ")}`,
+    );
+  }
+  return `${JSON.stringify(result.data, null, 2)}\n`;
 }
 
 export function resolveAgentControlRecord(

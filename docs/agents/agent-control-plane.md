@@ -34,6 +34,13 @@ The registry resolves:
 agent-id -> endpoint/workspace/capabilities -> authorized action
 ```
 
+Registry discovery can also be represented as a source-only snapshot artifact.
+The artifact contains the dry-run registry snapshot plan, deterministic
+normalized agent ids, generated summary counts, and schema validation for JSON
+round trips. It is intended for tests, review, and shadow-mode control-plane
+work; it does not read live workspaces, contact agent services, or mutate any
+runtime state.
+
 ## Safe Operations First
 
 The initial control surface only models safe operations:

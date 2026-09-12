@@ -2,13 +2,17 @@ import { describe, expect, it } from "vitest";
 import {
   authorizeAgentControlAction,
   buildAgentControlOperationPlan,
+  buildAgentControlRegistrySnapshot,
+  buildAgentControlRegistrySnapshotArtifact,
   buildManagedFileUpdatePlan,
   isManagedAgentMarkdownFile,
   listManageableAgents,
   loadAgentControlRegistryFile,
   normalizeAgentControlRegistry,
   parseAgentControlRegistryJson,
+  parseAgentControlRegistrySnapshotJson,
   resolveAgentControlTarget,
+  serializeAgentControlRegistrySnapshot,
   validateAgentControlRegistryIntegrity,
   type AgentControlRegistry,
 } from "./agent-control.js";
@@ -513,6 +517,196 @@ describe("agent control registry", () => {
         request: { action: "sendMessage", targetAgentId: "reese", message: "  " },
       }),
     ).toThrow("empty message");
+  });
+});
+
+describe("agent control registry snapshots", () => {
+  const defaults = {
+    ownerTeam: "employee-agents",
+    role: "employee-agent",
+    status: "ready" as const,
+    endpointBasePath: "/agent-control",
+    endpointNetworks: ["openclaw-backplane"],
+    workspaceRootPrefix: "/srv/openclaw/data/employee-agents",
+    managedFiles: ["AGENTS.md", "memory/", "knowledge/"],
+    capabilities: ["teams"],
+    management: {
+      managerTeams: ["artemis-leadership", "fiona-leadership"],
+      actions: ["list", "readStatus", "sendMessage", "readManagedFile"] as const,
+    },
+  };
+
+  it("builds a deterministic dry-run registry snapshot from discovered services", () => {
+    const snapshot = buildAgentControlRegistrySnapshot({
+      sources: [
+        {
+          agentId: "Haseeb Dadabhoy",
+          displayName: "Haseeb Dadabhoy",
+          serviceName: "employee-agent-hdadabhoy",
+          capabilities: ["teams", "microsoft365"],
+        },
+        {
+          agentId: "babbey",
+          displayName: "Brian Abbey",
+          serviceName: "employee-agent-babbey",
+        },
+      ],
+      defaults,
+      fleetManagement: {
+        managers: ["Artemis", "Fiona"],
+        actions: ["list", "readStatus", "sendMessage", "readManagedFile"],
+      },
+      upchainCommunication: {
+        targetAgentIds: ["Artemis", "Fiona"],
+        allowedSourceOwnerTeams: ["employee-agents"],
+        actions: ["sendMessage"],
+      },
+    });
+
+    expect(snapshot).toMatchObject({
+      status: "planned",
+      executionMode: "dry_run",
+      sourceCount: 2,
+      normalizedAgentIds: ["babbey", "haseeb-dadabhoy"],
+      registry: {
+        version: 1,
+        fleetManagement: {
+          managers: ["artemis", "fiona"],
+        },
+      },
+    });
+    expect(snapshot.registry.agents.map((agent) => agent.endpoint.serviceName)).toEqual([
+      "employee-agent-babbey",
+      "employee-agent-hdadabhoy",
+    ]);
+    expect(snapshot.registry.agents[0]).toMatchObject({
+      id: "babbey",
+      workspace: {
+        root: "/srv/openclaw/data/employee-agents/babbey",
+      },
+      management: {
+        managerTeams: ["artemis-leadership", "fiona-leadership"],
+      },
+    });
+  });
+
+  it("serializes and validates deterministic registry snapshot artifacts", () => {
+    const snapshot = buildAgentControlRegistrySnapshot({
+      sources: [
+        {
+          agentId: "Haseeb Dadabhoy",
+          displayName: "Haseeb Dadabhoy",
+          serviceName: "employee-agent-hdadabhoy",
+          capabilities: ["teams", "microsoft365"],
+        },
+        {
+          agentId: "babbey",
+          displayName: "Brian Abbey",
+          serviceName: "employee-agent-babbey",
+        },
+      ],
+      defaults,
+      fleetManagement: {
+        managers: ["Artemis", "Fiona"],
+        actions: ["list", "readStatus", "sendMessage", "readManagedFile"],
+      },
+      upchainCommunication: {
+        targetAgentIds: ["Artemis", "Fiona"],
+        allowedSourceOwnerTeams: ["employee-agents"],
+        actions: ["sendMessage"],
+      },
+    });
+    const artifact = buildAgentControlRegistrySnapshotArtifact({
+      snapshot,
+      generatedAt: new Date("2026-09-12T00:00:00.000Z"),
+      source: " unit test discovery ",
+    });
+    const serialized = serializeAgentControlRegistrySnapshot(artifact);
+    const parsed = parseAgentControlRegistrySnapshotJson({
+      raw: serialized,
+      source: "agent-control.snapshot.json",
+    });
+
+    expect(serialized).toBe(serializeAgentControlRegistrySnapshot(artifact));
+    expect(parsed).toMatchObject({
+      ok: true,
+      snapshot: {
+        version: 1,
+        snapshotVersion: 1,
+        generatedAt: "2026-09-12T00:00:00.000Z",
+        source: "unit test discovery",
+        plan: {
+          status: "planned",
+          executionMode: "dry_run",
+          sourceCount: 2,
+          normalizedAgentIds: ["babbey", "haseeb-dadabhoy"],
+        },
+        summary: {
+          totalAgents: 2,
+          statusCounts: { ready: 2 },
+          ownerTeamCounts: { "employee-agents": 2 },
+          capabilityCounts: { microsoft365: 1, teams: 2 },
+          managementActionCounts: {
+            list: 2,
+            readStatus: 2,
+            sendMessage: 2,
+            readManagedFile: 2,
+            requestManagedFileUpdate: 0,
+          },
+          fleetManagementEnabled: true,
+          upchainCommunicationEnabled: true,
+        },
+      },
+    });
+    expect(serialized).toContain('"serviceName": "employee-agent-babbey"');
+    expect(serialized).toContain('"serviceName": "employee-agent-hdadabhoy"');
+  });
+
+  it("rejects malformed registry snapshot artifacts without returning partial data", () => {
+    const snapshot = buildAgentControlRegistrySnapshot({
+      sources: [{ agentId: "Brian Abbey", serviceName: "employee-agent-babbey" }],
+      defaults,
+    });
+    const artifact = buildAgentControlRegistrySnapshotArtifact({
+      snapshot,
+      generatedAt: new Date("2026-09-12T00:00:00.000Z"),
+    });
+    const parsed = parseAgentControlRegistrySnapshotJson({
+      raw: JSON.stringify({
+        ...artifact,
+        plan: {
+          ...artifact.plan,
+          sourceCount: 2,
+          normalizedAgentIds: ["wrong-id"],
+        },
+      }),
+      source: "agent-control.snapshot.json",
+    });
+
+    expect(parsed).toMatchObject({ ok: false });
+    expect(parsed.ok ? [] : parsed.errors.join("\n")).toContain("sourceCount must match");
+    expect(parsed.ok ? [] : parsed.errors.join("\n")).toContain("normalizedAgentIds must match");
+  });
+
+  it("fails closed when a snapshot would create duplicate registry ids", () => {
+    expect(() =>
+      buildAgentControlRegistrySnapshot({
+        sources: [
+          { agentId: "Brian Abbey", serviceName: "employee-agent-babbey" },
+          { agentId: "brian-abbey", serviceName: "employee-agent-babbey-copy" },
+        ],
+        defaults,
+      }),
+    ).toThrow("duplicate agent id");
+  });
+
+  it("fails closed when a snapshot source is missing service identity", () => {
+    expect(() =>
+      buildAgentControlRegistrySnapshot({
+        sources: [{ agentId: "Brian Abbey", serviceName: "  " }],
+        defaults,
+      }),
+    ).toThrow("missing service name");
   });
 });
 

@@ -50,7 +50,7 @@ mutations while gathering evidence.
 
 | Gate                      | Required evidence                                                                                                                                                            | Blocks test if missing |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
-| Test boundary             | Written statement that the prod test is shadow-mode/read-only, or a list mapping each live mutation to `ACP-R01` through `ACP-R11` with approval status.                     | Yes                    |
+| Test boundary             | Written statement that the prod test is shadow-mode/read-only, or a list mapping each live mutation to the matching `ACP-Rxx` risk-register item with approval status.       | Yes                    |
 | Active-agent protection   | Documented rule that active sessions are never preempted, cancelled, restarted, drained, or reconfigured by the test.                                                        | Yes                    |
 | Principal binding         | Trusted gateway/service boundary derives manager identity; callers cannot supply `agentId`, teams, or manager grants in request bodies.                                      | Yes                    |
 | Authorization tests       | Forged-principal denial, out-of-scope action denial, and allowed-action cases exist in source tests or approved non-prod tests.                                              | Yes                    |
@@ -59,6 +59,7 @@ mutations while gathering evidence.
 | Least-privilege responses | Response shapes are scoped by action; workspace roots are not disclosed for list, status, or messaging-only calls.                                                           | Yes                    |
 | Message safety            | `sendMessage` semantics are defined as asynchronous, non-preemptive, idempotent, rate-limited, and stoppable before delivery, or removed from the prod test.                 | Yes                    |
 | Pending file updates      | `requestManagedFileUpdate` produces only `pending_review` plans with no workspace writes, reloads, or automatic apply path.                                                  | Yes                    |
+| Ledger isolation          | Any Tina/Artemis-style owner/evidence ledger output uses a local fixture or clearly non-actionable shadow namespace with no dashboard, alert, or follow-up fanout.           | Yes                    |
 | Feature/route gate        | Management-plane route or service can be disabled without redeploying unrelated agent services.                                                                              | Yes                    |
 | Last-good state           | Last-good route config, registry version, queue state, service definition, and audit sink location are recorded before testing.                                              | Yes                    |
 | Monitoring window         | Owner, start/end time, stop authority, escalation path, and post-test observation window are assigned.                                                                       | Yes                    |
@@ -77,6 +78,8 @@ Before any production test starts:
 3. Confirm no test depends on service restart, route replacement, Swarm alias
    change, DB migration, workspace write, cron/watch update, secret permission
    change, session cleanup, or live rollback.
+   Live task-ledger, dashboard, alert-linked task, or operator-visible status
+   writes also remain out of scope unless separately approved under `ACP-R19`.
 4. Confirm the operator has stop authority to disable only the new management
    plane route/flag/queue path, not current agent runtimes.
 5. Confirm all approval packets name exact target, command/change, expected
@@ -101,6 +104,8 @@ Stop the test and prepare rollback approval if any trigger occurs:
   idempotency key, or proven non-preemptive.
 - `requestManagedFileUpdate` writes a file, reloads agent instructions, bypasses
   review, or creates a plan outside the expected pending-review store.
+- Shadow observations create live task-ledger rows, dashboard work items, alerts,
+  or follow-up automation that operators could mistake for real assigned work.
 - Any secret value appears in logs, chat, docs, command lines, URLs, screenshots,
   or audit payloads.
 - Monitoring detects resource pressure, retry storms, queue growth, repeated
@@ -149,6 +154,7 @@ if exposure crossed a trust boundary.
 | Cron/watch jobs                         | Disable or restore only the test-owned job declaration.                                                                                                        | Required under `ACP-R08`; do not clear shared queues or histories without approval.                                     |
 | Secrets/BWS grants                      | Revoke added grants, restore previous grant metadata, or rotate exposed credentials.                                                                           | Required under `ACP-R09`; never handle secret values in chat, docs, commands, or logs.                                  |
 | Session cleanup/state                   | Restore backed-up rows/files or rebind sessions only if cleanup touched live state.                                                                            | Required under `ACP-R11`; default is preserve evidence and avoid cleanup.                                               |
+| Task ledger/dashboard rows              | Mark only test-owned rows closed, voided, or shadow-expired by idempotency/request id; keep audit evidence and avoid triggering follow-up automation.          | Required under `ACP-R19` if the rows are in a live ledger, dashboard store, alert-linked view, or operator stream.      |
 | Employee-agent services                 | Do not restart, scale, drain, or recreate as part of management-plane rollback.                                                                                | Always approval-required under `ACP-R03`; if needed, escalate as a separate incident.                                   |
 
 ## Monitoring Signals
@@ -174,10 +180,14 @@ Monitor only approved metadata and non-secret logs/metrics.
   retry storms, request fanout, queue growth, backoff behavior.
 - Secrets hygiene: redaction checks, absence of secret values in logs/audits,
   metadata-only permission records.
+- Ledger/dashboard isolation: shadow namespace counts, non-actionable markers,
+  zero alert/follow-up fanout, zero operator-visible real-task rows, and
+  closure/void markers for any approved live shadow rows.
 
-## Consolidated Risk Register Additions Required Before Approval
+## Consolidated Risk Register Coverage
 
-Add these items to the consolidated risk register before approving prod tests:
+Confirm these items exist in the consolidated risk register before approving
+prod tests:
 
 - `ACP-R12` Principal derivation and identity boundary: risk that caller-supplied
   principals, team grants, or manager ids bypass trusted gateway/service
@@ -204,6 +214,28 @@ Add these items to the consolidated risk register before approving prod tests:
   unexpectedly, or require disruptive cleanup. Approval gate must require
   idempotency, hold/drain/discard controls, owner tags, expiration, and
   non-disruptive cleanup evidence.
+- `ACP-R18` Upchain communication allowlist: risk that employee/subagent
+  initiated messages to Artemis, Fiona, or manager-team endpoints bypass a
+  strict allowlist. Approval gate must require deny-by-default tests, allowed
+  source ids/teams, target managers, queue policy, and deny behavior.
+- `ACP-R19` Shadow-mode task ledger and dashboard accounting: risk that
+  Tina/Artemis-style owner/evidence rows written during shadow testing become
+  actionable work, trigger follow-up automation, or create false completion
+  evidence. Approval gate must require a shadow namespace or local fixture,
+  non-actionable markers, fanout suppression, visibility scope, and closure path.
+- `ACP-R20` Shadow wrapper live-handler isolation: risk that a shadow wrapper
+  imports or calls live mutation handlers. Approval gate must require static
+  import boundary tests, forbidden-handler contract tests, no live adapter in
+  shadow mode, and zero live side-effect counters.
+- `ACP-R21` Shadow audit sink outage behavior: risk that prod shadow execution
+  continues without durable audit. Approval gate must require fail-closed audit
+  behavior, audit-write failure samples, destination health checks, and request
+  id correlation.
+- `ACP-R22` Production-derived registry data leakage: risk that service names,
+  workspace roots, team structure, or capabilities from registry snapshots leak
+  into public or unauthorized artifacts. Approval gate must require redacted
+  samples, artifact destination review, private repo/evidence gates, and
+  retention owner.
 
 ## Approval Packet Template
 
