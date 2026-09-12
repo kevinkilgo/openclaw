@@ -28,6 +28,8 @@ Prove that the internal agent management plane can:
 - produce operation plans for `readStatus`, `sendMessage`, `readManagedFile`,
   and `requestManagedFileUpdate`;
 - reject unmanaged Markdown paths and empty messages;
+- record Tina/Artemis-style owner and evidence states only in a local fixture or
+  non-actionable shadow namespace;
 - maintain live-session non-interruption while observing production-like
   identities, targets, and request shapes.
 
@@ -88,6 +90,8 @@ Explicitly out of scope for this approval:
   endpoint;
 - invoking `agents.create`, `agents.update`, `agents.delete`, or
   `agents.files.set`;
+- writing live task-ledger rows, manager dashboard rows, alert-linked task
+  views, or operator-visible status streams;
 - sending a message to any live agent/session;
 - reading arbitrary workspace paths beyond the approved managed Markdown
   simulation set;
@@ -133,6 +137,27 @@ requires a separate item-specific approval packet.
   or mutate secrets.
 - `ACP-R10`: rollback commands are live mutations and remain approval-gated.
 - `ACP-R11`: stale-session cleanup remains held.
+- `ACP-R12`: trusted principal derivation remains a precondition for any
+  production-derived identity observation.
+- `ACP-R13`: durable audit persistence remains a precondition beyond local
+  source tests.
+- `ACP-R14`: live-session non-interruption remains mandatory; no control action
+  may reach a live agent.
+- `ACP-R15`: production-derived registry input must fail closed and name a
+  last-good artifact.
+- `ACP-R16`: response disclosure must stay action-scoped and least-privilege.
+- `ACP-R17`: test-owned queues and pending plans must be contained.
+- `ACP-R18`: upchain communication to Artemis/Fiona remains denied unless
+  explicitly allowlisted.
+- `ACP-R19`: task-ledger and dashboard accounting must stay local or
+  non-actionable shadow-only unless separately approved.
+- `ACP-R20`: shadow wrapper live-handler isolation must prove the test path
+  cannot import or call live `agents.*`, delivery, restart/update, file-set, or
+  mutation adapters.
+- `ACP-R21`: shadow audit sink outage behavior must fail closed; unaudited prod
+  shadow execution is not acceptable.
+- `ACP-R22`: production-derived registry snapshots must be redacted, visibility
+  reviewed, and retained only in approved private/evidence locations.
 
 ## Preconditions
 
@@ -183,6 +208,8 @@ requires a separate item-specific approval packet.
    - Confirm audit output redacts content where needed and contains no secrets.
    - Confirm metrics/logs identify shadow mode distinctly from active control
      actions.
+   - Confirm any owner/evidence rows are local fixture rows or shadow-only rows
+     that cannot trigger dashboards, alerts, follow-ups, or operator work.
 
 6. Stop and review
    - Stop the test without running rollback commands.
@@ -204,6 +231,8 @@ Required evidence:
   message, and unauthorized target;
 - explicit zero count for live deliveries, live writes, service restarts, route
   enables, cron/watch changes, secret operations, and cleanup operations.
+- explicit zero count for live actionable task-ledger rows, dashboard work
+  items, alert-linked tasks, and follow-up automation.
 
 Recommended metrics/log fields:
 
@@ -228,6 +257,8 @@ Recommended metrics/log fields:
 - `sendMessage` produces only a non-delivered shadow plan.
 - Audit/observability captures every attempt, including denials, with
   correlation ids and shadow-mode markers.
+- Tina/Artemis-style evidence states are recorded only as non-actionable shadow
+  evidence and cannot be mistaken for live assigned work.
 - No secret values appear in logs, docs, command lines, or evidence artifacts.
 
 ## Fail Criteria
@@ -237,6 +268,8 @@ Stop the test immediately if any of these occur:
 - any live message is sent, queued for delivery, or wakes a target session;
 - any workspace, registry DB, runtime config, gateway config, Swarm config,
   cron/watch declaration, or secret permission is mutated;
+- any live task-ledger row, dashboard work item, alert-linked task, or
+  operator-visible status row is created without `ACP-R19` approval;
 - any service restart, deploy, scale, or route enablement is attempted;
 - audit capture fails for an allowed or denied decision;
 - caller-supplied principal data is accepted as authoritative;
@@ -245,6 +278,9 @@ Stop the test immediately if any of these occur:
 - audit/log output exposes a secret or sensitive content body;
 - test code cannot prove shadow-mode isolation from live `agents.*` mutation
   APIs.
+- audit append fails and the runner continues anyway;
+- production-derived registry snapshots appear in public repos, broad logs,
+  dashboard surfaces, or other unapproved destinations.
 
 ## Rollback and Stop Plan
 
