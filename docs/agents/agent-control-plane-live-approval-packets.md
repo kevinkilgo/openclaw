@@ -132,43 +132,220 @@ Approval wording:
 
 ## Packet ACP-APP-03: Agent-Control Internal Route/Service, Disabled By Default
 
-Recommendation: hold until shadow evidence passes.
+Recommendation: review only. Do not execute until Fiona independently reviews
+APP-01/02 evidence and this APP-03 plan, then Kevin approves the exact reviewed
+diff and window.
+
+Approval status: held. This packet is prepared for review only and does not
+authorize a router/gateway update, service deploy, route enablement, live
+manager send, workspace write, DB mutation, secret change, cron/watch change, or
+rollback command.
 
 Risk items: `ACP-R01`, `ACP-R02`, `ACP-R12`, `ACP-R13`, `ACP-R14`, `ACP-R16`,
 `ACP-R20`, `ACP-R21`.
 
-Intended action: stage an internal `/agent-control` route or service in
-disabled/shadow-only mode.
+Precondition evidence already available from APP-01/02:
 
-Targets: gateway/router configuration or a new internal service definition.
+- Registry snapshot: 14 agent records.
+- Shadow attempts: 6 total, 4 allowed, 2 denied.
+- Request-id coverage: 6/6.
+- Audit events: 6.
+- Live side-effect counters: all zero.
+- Blockers: none.
 
-Exact change/command boundary: enable only a disabled-by-default route/service
-for shadow test traffic if separately scheduled. No employee restarts, no live
-sends, no workspace writes.
+Intended action: stage, but keep disabled, a shadow-only internal
+agent-control gateway route that can later run the already-proven shadow wrapper
+against the private registry snapshot and append shadow audit evidence. This is
+not a live management route.
 
-Expected effect: make the shadow control plane reachable from trusted manager
-contexts without exposing active management actions.
+Target service/route: `gateway-router` route group
+`/internal/agent-control/v1/shadow`. The route must bind only to the internal
+gateway/router surface and must remain unavailable to public Telegram, Teams,
+Discord, app-origin, webhook, MCP, and employee-agent channel ingress.
 
-Interruption window: possible gateway/router health-starting interval if a
-router update is required.
+Design decision: prefer a disabled gateway-router route over a separate live
+`agent-control` service for APP-03. A separate service adds Swarm service
+registration, DNS, network, and health surfaces before they are needed. The
+route approach minimizes the change surface and can still be rolled back by
+removing or disabling one config block. If implementation review proves the
+gateway route cannot be added without broad router risk, this packet must be
+revised before approval.
 
-Success evidence: route/service health, trusted principal binding, deny samples,
-audit append proof, no live side-effect counters, and existing channel delivery
-continuity.
+Proposed config diff, not applied:
+
+```yaml
+agentControl:
+  internalRoute:
+    enabled: false
+    mode: shadow
+    path: /internal/agent-control/v1/shadow
+    bind: internal-gateway-only
+    trustedIdentitySource: gateway-request-scope
+    allowedPrincipals:
+      agentIds:
+        - artemis
+        - fiona
+      teams:
+        - artemis-leadership
+        - fiona-leadership
+    allowedActions:
+      - list
+      - readStatus
+      - readManagedFile
+      - requestManagedFileUpdate
+    deniedActions:
+      - sendMessage
+    registry:
+      source: private-artifact
+      path: .artifacts/agent-control-live-approval/<run-id>/agent-control-registry-snapshot.private.json
+      failClosed: true
+    audit:
+      sink: .artifacts/agent-control-live-approval/<run-id>/agent-control-app03-shadow-audit.private.ndjson
+      failClosed: true
+      requiredFields:
+        - requestId
+        - sourceService
+        - principalAgentId
+        - targetAgentId
+        - action
+        - decision
+    liveAdapters:
+      delivery: disabled
+      workspaceWrites: disabled
+      serviceMutation: disabled
+      secretReads: disabled
+      cronMutation: disabled
+      databaseMutation: disabled
+      liveHandlerCalls: disabled
+```
+
+Implementation boundary to prove before approval:
+
+- The route is absent or returns disabled before `agentControl.internalRoute.enabled`
+  is explicitly set true under a future packet.
+- The route imports only the agent-control registry parser, authorization,
+  operation planner, shadow wrapper, shadow matrix/evidence package builder, and
+  audit appender.
+- The route does not import or call gateway message delivery, conversation
+  send/turn handlers, Teams/Telegram/Discord outbound handlers, live workspace
+  file APIs, Docker/Swarm adapters, secret/BWS resolvers, cron/watch handlers,
+  production DB mutation helpers, session cleanup helpers, or rollback helpers.
+- `sendMessage` remains denied for APP-03 even though the offline shadow wrapper
+  can model message planning. Live send testing stays held under APP-04.
+- `requestManagedFileUpdate` may only produce a shadow pending-review plan in
+  the private evidence artifact. It must not write a live pending-review store
+  or any agent workspace.
+
+Exact change/command boundary for a future approval: apply only the reviewed
+disabled route/config block and run route-disabled health checks. No active
+control-plane route, no live manager action, no employee-agent restart, no live
+workspace write, no DB mutation, no secret access, no cron/watch change, and no
+rollback command are included.
+
+Expected effect: make the reviewed shadow route definition present but disabled
+so the next approval can test reachability without designing the route under
+pressure. Existing channel delivery and running agents should be unchanged.
+
+Interruption window: none if the final implementation can be loaded without a
+router update. If a router update, rollout, restart, or health-starting window is
+required, execution must stop and return for approval with the exact affected
+service, expected downtime/health-starting window, active-session check, and
+rollback command.
+
+Required preflight before approval:
+
+- Fiona independent review of APP-01/02 closeout evidence and this APP-03 plan.
+- Source diff review proving the route is disabled by default.
+- Static import boundary test for forbidden live mutation adapters.
+- Focused route/config tests proving disabled requests cannot reach the shadow
+  wrapper and enabled-shadow fixture requests cannot produce live side effects.
+- Action response review proving list/status/message planning responses do not
+  expose workspace roots unless the action requires it.
+- Private artifact path and retention owner for route-disabled proof and audit
+  samples.
+
+Health checks for the future approved run:
+
+- Pre: `gateway-router` service `1/1`; active employee agents `1/1`; current
+  active-session count captured; APP-01/02 private snapshot still present with
+  restrictive permissions.
+- Config: route flag reads `enabled=false`; route path is internal-only; trusted
+  identity source is gateway-derived, not caller-provided.
+- Route disabled: request to `/internal/agent-control/v1/shadow` returns a
+  disabled/404/403-style response and records no shadow operation.
+- Existing channels: sample read-only health/status check confirms Telegram,
+  Teams, and existing gateway health are unaffected.
+- Post: no new service restart events, no route enablement, no delivery attempts,
+  no workspace writes, no DB mutations, no secret reads, no cron mutations, and
+  no live-handler calls.
+
+Expected logs/artifacts:
+
+- Private artifact directory:
+  `.artifacts/agent-control-live-approval/<run-id>/app03-review/`
+- Expected files:
+  - `app03-config-diff.review.patch`
+  - `app03-static-boundary.review.txt`
+  - `app03-route-disabled-health.review.json`
+  - `app03-non-interruption.review.json`
+  - `fiona-app03-independent-review.md`
+- Expected log markers:
+  - `agent-control.route.disabled`
+  - `agent-control.authorization` only if a later enabled-shadow test is
+    separately approved
+  - no `message.delivery`, no workspace-write marker, no service-mutation
+    marker, no DB write marker, no secret-read marker, no cron/watch mutation
+    marker
 
 Risk if wrong: gateway routing could interrupt channels or expose control paths
-to the wrong callers.
+to the wrong callers. A disabled route bug could still shadow an existing route,
+accept untrusted principals, disclose production-derived registry details, or
+create false confidence if audit/disabled checks are not durable.
 
-Rollback/stop path: disable the new route/flag or revert only the route config;
-router rollback/restart requires separate approval if not included in the
-approved command.
+Rollback plan for the future approved run:
+
+- Preferred stop: leave `agentControl.internalRoute.enabled=false`; no rollback
+  needed if only source/config review occurs.
+- If the disabled config was applied and causes no router restart: revert the
+  config diff in source/config and verify route-disabled health again.
+- If applying the disabled config required a router update: rollback is not
+  pre-approved by this review packet. Prepare a separate rollback approval
+  naming the exact prior config/image, service, command, backup path, monitoring
+  window, and expected health proof.
+- Preserve all APP-03 evidence and audit samples; do not delete diagnostic
+  artifacts during rollback.
+
+Proof it cannot perform live management actions:
+
+- Route flag is disabled by default.
+- `allowedActions` excludes `sendMessage` for APP-03.
+- No live adapters are configured.
+- Shadow wrapper side-effect counters must remain zero:
+  `deliveryAttempts`, `workspaceWrites`, `serviceMutations`, `secretReads`,
+  `cronMutations`, `liveHandlerCalls`.
+- Audit append is fail-closed; no audit means no recorded shadow result.
+- Static import boundary test must fail if the route imports live delivery,
+  workspace, Swarm/Docker, secret, cron/watch, DB-mutation, session-cleanup, or
+  rollback modules.
+
+Open review requirements:
+
+- Fiona must independently review APP-01/02 evidence and this APP-03 design
+  before Kevin approves any router/gateway change.
+- APP-04, APP-05, APP-06, and APP-07 remain held. APP-03 does not approve live
+  manager-to-agent send, managed-file update, stale ingress cleanup, or SQLite
+  repair.
 
 Approval wording:
 
-> I approve ACP-APP-03 only for a disabled/shadow-only internal agent-control
-> route or service using the exact reviewed config and monitoring window. Notify
-> me before any router/gateway restart or update that can interrupt current
-> agents.
+> I approve ACP-APP-03 only for applying the reviewed disabled/shadow-only
+> internal gateway route config for `/internal/agent-control/v1/shadow`, with
+> `enabled=false`, no live adapters, `sendMessage` denied, private audit/evidence
+> artifacts, and the approved monitoring window. No live sends, workspace
+> writes, route enablement, service deploy/restart, Swarm changes, DB mutation,
+> cron/watch changes, secret changes, cleanup, rollback commands, or live
+> management actions are approved. If a router/gateway restart or update is
+> required, stop and notify me before proceeding.
 
 ## Packet ACP-APP-04: Live Manager-To-Agent Send Test
 
