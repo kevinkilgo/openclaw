@@ -324,6 +324,43 @@ describe("reply turn admission", () => {
     await expect(admission).rejects.toMatchObject({ code: "SESSION_WORK_START_CHANGED" });
   });
 
+  it("marks queued follow-up admission invalidated when the session rotates before claim", async () => {
+    const sessionKey = "agent:main:telegram:topic:queued-reset-expected";
+    const sessionId = "session-before-reset";
+    const nextSessionId = "session-after-reset";
+    const storePath = createSessionStoreFor(sessionKey, sessionId);
+    const mutationStarted = createDeferred();
+    const releaseMutation = createDeferred();
+    const mutation = runExclusiveSessionLifecycleMutation({
+      scope: storePath,
+      identities: [sessionKey, sessionId],
+      run: async () => {
+        mutationStarted.resolve();
+        await releaseMutation.promise;
+        await replaceSessionEntry({ sessionKey, storePath }, {
+          sessionId: nextSessionId,
+          updatedAt: Date.now(),
+        } as SessionEntry);
+      },
+    });
+    await mutationStarted.promise;
+
+    const admission = admitTestReplyTurn({
+      sessionKey,
+      sessionId,
+      expectedSessionId: sessionId,
+      storePath,
+      kind: "queued_followup",
+    });
+    releaseMutation.resolve();
+    await mutation;
+
+    await expect(admission).resolves.toEqual({
+      status: "skipped",
+      reason: "lifecycle-invalidated",
+    });
+  });
+
   it("drops queued work when reset cleanup cancels admission", async () => {
     const sessionKey = "agent:main:telegram:topic:queued-reset";
     const sessionId = "session-before-reset";
