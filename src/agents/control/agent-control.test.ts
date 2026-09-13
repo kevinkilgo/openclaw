@@ -15,6 +15,7 @@ import {
   parseAgentControlRegistryJson,
   parseAgentControlRegistrySnapshotJson,
   resolveAgentControlTarget,
+  runAgentControlShadowMatrix,
   runAgentControlShadowOperation,
   serializeAgentControlRegistrySnapshot,
   validateAgentControlRegistryIntegrity,
@@ -930,5 +931,56 @@ describe("managed agent Markdown files", () => {
     for (const forbidden of forbiddenLiveAdapters) {
       expect(source).not.toContain(forbidden);
     }
+  });
+
+  it("records a shadow matrix summary without live side effects", async () => {
+    const auditEvents: unknown[] = [];
+    const result = await runAgentControlShadowMatrix({
+      registry: fleetRegistry,
+      now: new Date("2026-09-12T00:00:00.000Z"),
+      auditAppender: ({ audit }) => {
+        auditEvents.push(audit);
+      },
+      attempts: [
+        {
+          principal: { agentId: "Artemis", teams: [], roles: ["manager"] },
+          request: { action: "readStatus", targetAgentId: "babbey" },
+        },
+        {
+          principal: { agentId: "babbey", teams: [], roles: ["employee"] },
+          request: { action: "sendMessage", targetAgentId: "Fiona", message: "need help" },
+        },
+        {
+          principal: { agentId: "unknown-employee", teams: [], roles: ["employee"] },
+          request: { action: "sendMessage", targetAgentId: "Fiona", message: "need help" },
+        },
+      ],
+    });
+
+    expect(result).toMatchObject({
+      status: "shadow_matrix_recorded",
+      executionMode: "dry_run",
+      summary: {
+        totalAttempts: 3,
+        allowed: 2,
+        denied: 1,
+        byAction: {
+          readStatus: { allowed: 1, denied: 0 },
+          sendMessage: { allowed: 1, denied: 1 },
+        },
+        byReason: {
+          principal_not_in_management_scope: 1,
+        },
+        sideEffectCounters: {
+          deliveryAttempts: 0,
+          workspaceWrites: 0,
+          serviceMutations: 0,
+          secretReads: 0,
+          cronMutations: 0,
+          liveHandlerCalls: 0,
+        },
+      },
+    });
+    expect(auditEvents).toHaveLength(3);
   });
 });
