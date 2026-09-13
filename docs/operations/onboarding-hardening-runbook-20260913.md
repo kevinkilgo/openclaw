@@ -150,6 +150,7 @@ Inventory checklist:
 - Define stale threshold and approved namespace, for example Teams onboarding capture requests older than the test window.
 - Identify source of truth: router SQLite table, plugin state namespace, relay queue, file-backed ingress queue, or dead-letter store.
 - Count current entries, oldest/newest timestamps, and candidate stale entries with ids redacted or hashed.
+- For file-backed copied/read-only ingress paths, run the validation helper with `--teams-ingress-path` and `--teams-stale-before` so the packet records stale candidate hashes instead of raw file names or peer identifiers.
 - Check whether any candidate maps to a non-terminal onboarding request.
 - Confirm no current tester nonce, trusted DM window, or active employee route depends on the candidate.
 
@@ -199,6 +200,13 @@ Target system/person/channel:
 Exact command or change:
 Expected effect:
 Snapshot paths and hashes:
+Dry-run/read-only evidence:
+Stale candidate scope, with redacted or hashed ids:
+Rollback proof checklist:
+  - rollback artifact/path:
+  - rollback command or restore step:
+  - owner authorized to execute rollback:
+  - post-rollback validation:
 Risk if wrong:
 Rollback path:
 Validation after action:
@@ -209,3 +217,13 @@ Approval wording needed:
 ## Companion Validation Helper
 
 Use `scripts/operations/onboarding-hardening-validate.sh` for local read-only evidence collection. It can inspect copied SQLite snapshots, path presence, and candidate artifact text. It intentionally does not pause services, alter DBs, call Docker/Swarm, change BWS, or clean Teams ingress.
+
+For stale Teams ingress prep, pass a copied or explicitly read-only path plus an epoch cutoff:
+
+```bash
+scripts/operations/onboarding-hardening-validate.sh \
+  --teams-ingress-path /path/to/copied/teams-ingress \
+  --teams-stale-before 1799700000
+```
+
+The helper reports total file count, oldest/newest timestamps, stale candidate count, and SHA256 hashes of relative candidate paths only. Treat `stale_candidates=unverified` as a blocker for any cleanup approval packet unless another redacted inventory source supplies equivalent evidence.

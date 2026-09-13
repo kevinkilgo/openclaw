@@ -170,8 +170,8 @@ check_teams_ingress_path() {
   fi
   json_line "teams_ingress.path=$path"
   json_line "teams_ingress.file_count=$(find "$path" -type f | wc -l | tr -d ' ')"
-  json_line "teams_ingress.oldest=$(find "$path" -type f -printf '%T@ %p\n' 2>/dev/null | sort -n | head -n 1 | awk '{print $1}')"
-  json_line "teams_ingress.newest=$(find "$path" -type f -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -n 1 | awk '{print $1}')"
+  json_line "teams_ingress.oldest=$(find "$path" -type f -printf '%T@\n' 2>/dev/null | sort -n | head -n 1)"
+  json_line "teams_ingress.newest=$(find "$path" -type f -printf '%T@\n' 2>/dev/null | sort -n | tail -n 1)"
   if [[ -z "$stale_before" ]]; then
     return
   fi
