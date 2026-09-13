@@ -12,6 +12,7 @@ import {
   parseAgentControlRegistryJson,
   parseAgentControlRegistrySnapshotJson,
   resolveAgentControlTarget,
+  runAgentControlShadowOperation,
   serializeAgentControlRegistrySnapshot,
   validateAgentControlRegistryIntegrity,
   type AgentControlRegistry,
@@ -780,5 +781,125 @@ describe("managed agent Markdown files", () => {
         request: { action: "readManagedFile", targetAgentId: "reese", relativePath: "secrets.md" },
       }),
     ).toThrow("unmanaged path");
+  });
+
+  it("runs shadow operations only after durable audit append succeeds", async () => {
+    const auditEvents: unknown[] = [];
+    const result = await runAgentControlShadowOperation({
+      registry,
+      principal: { agentId: "Artemis", teams: [], roles: ["manager"] },
+      request: { action: "sendMessage", targetAgentId: "reese", message: "status?" },
+      now: new Date("2026-09-12T00:00:00.000Z"),
+      auditContext: {
+        requestId: "shadow-001",
+        sourceService: "agent-control-shadow-wrapper",
+      },
+      auditAppender: ({ audit }) => {
+        auditEvents.push(audit);
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: "shadow_allowed",
+      executionMode: "dry_run",
+      operation: {
+        status: "planned",
+        executionMode: "dry_run",
+        action: "sendMessage",
+        message: "status?",
+      },
+      audit: {
+        decision: "allow",
+        requestId: "shadow-001",
+        sourceService: "agent-control-shadow-wrapper",
+      },
+      sideEffectCounters: {
+        deliveryAttempts: 0,
+        workspaceWrites: 0,
+        serviceMutations: 0,
+        secretReads: 0,
+        cronMutations: 0,
+        liveHandlerCalls: 0,
+      },
+    });
+    expect(auditEvents).toHaveLength(1);
+  });
+
+  it("fails closed when shadow audit append fails", async () => {
+    await expect(
+      runAgentControlShadowOperation({
+        registry,
+        principal: { agentId: "Artemis", teams: [], roles: ["manager"] },
+        request: { action: "readStatus", targetAgentId: "reese" },
+        auditAppender: () => {
+          throw new Error("audit sink unavailable");
+        },
+      }),
+    ).rejects.toThrow("audit sink unavailable");
+  });
+
+  it("shadows managed-file updates as pending review only", async () => {
+    const result = await runAgentControlShadowOperation({
+      registry,
+      principal: { agentId: "Artemis", teams: [], roles: ["manager"] },
+      request: {
+        action: "requestManagedFileUpdate",
+        targetAgentId: "reese",
+        relativePath: "AGENTS.md",
+        proposedContent: "# AGENTS.md\n",
+        reason: "align operating rules",
+      },
+      now: new Date("2026-09-12T00:00:00.000Z"),
+      auditAppender: () => undefined,
+    });
+
+    expect(result).toMatchObject({
+      status: "shadow_allowed",
+      executionMode: "dry_run",
+      managedFileUpdate: {
+        status: "pending_review",
+        executionMode: "dry_run",
+        request: {
+          targetAgentId: "reese",
+          relativePath: "AGENTS.md",
+        },
+      },
+      sideEffectCounters: {
+        workspaceWrites: 0,
+        liveHandlerCalls: 0,
+      },
+    });
+  });
+
+  it("records shadow denials without attempting side effects", async () => {
+    const auditEvents: unknown[] = [];
+    const result = await runAgentControlShadowOperation({
+      registry,
+      principal: { agentId: "Richard", teams: ["platform"], roles: ["manager"] },
+      request: { action: "readManagedFile", targetAgentId: "reese", relativePath: "secrets.md" },
+      now: new Date("2026-09-12T00:00:00.000Z"),
+      auditAppender: ({ audit }) => {
+        auditEvents.push(audit);
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: "shadow_denied",
+      executionMode: "dry_run",
+      deniedReason: "principal_not_in_management_scope",
+      audit: {
+        decision: "deny",
+        action: "readManagedFile",
+      },
+      sideEffectCounters: {
+        deliveryAttempts: 0,
+        workspaceWrites: 0,
+        serviceMutations: 0,
+        secretReads: 0,
+        cronMutations: 0,
+        liveHandlerCalls: 0,
+      },
+    });
+    expect(auditEvents).toHaveLength(1);
   });
 });

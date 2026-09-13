@@ -41,6 +41,13 @@ round trips. It is intended for tests, review, and shadow-mode control-plane
 work; it does not read live workspaces, contact agent services, or mutate any
 runtime state.
 
+The shadow wrapper is also source-only. It accepts an already-trusted principal,
+a registry-backed request, and an injected audit appender. It returns only a
+dry-run operation or pending-review plan after audit append succeeds. If the
+audit appender fails, the wrapper fails closed and returns no successful plan.
+The wrapper does not import delivery, filesystem write, Swarm, secret, cron, or
+gateway mutation handlers.
+
 ## Safe Operations First
 
 The initial control surface only models safe operations:
@@ -89,12 +96,14 @@ The allowed set is always per-agent and explicit.
 ## Rollout Sequence
 
 1. Land the registry and authorization primitives in source.
-2. Add an internal `agent-control` service or gateway route that exposes safe
+2. Add a source-only shadow wrapper with fail-closed audit append and zero live
+   side-effect counters.
+3. Add an internal `agent-control` service or gateway route that exposes safe
    read/message operations through this module.
-3. Register Artemis/Fiona/team agents by logical id and service name.
-4. Add audited read access for managed Markdown files.
-5. Add Git-backed review/apply flow for managed Markdown updates.
-6. Only then connect the control plane to live employee onboarding templates.
+4. Register Artemis/Fiona/team agents by logical id and service name.
+5. Add audited read access for managed Markdown files.
+6. Add Git-backed review/apply flow for managed Markdown updates.
+7. Only then connect the control plane to live employee onboarding templates.
 
 This lets the control plane build in parallel to employee Teams onboarding
 without changing the onboarding runtime until an explicit rollout gate.
