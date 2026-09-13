@@ -48,6 +48,36 @@ type MSTeamsIngress = {
   stop: () => Promise<void>;
 };
 
+export type MSTeamsIngressRetryCleanupDryRun = {
+  dryRun: true;
+  status: "ready";
+  now: number;
+  staleClaimMs: number;
+  staleClaims: Array<{
+    eventId: string;
+    laneKey?: string;
+    ownerId: string;
+    claimedAt: number;
+    ageMs: number;
+  }>;
+  failedRetries: Array<{
+    eventId: string;
+    laneKey?: string;
+    reason: string;
+    failedAt: number;
+    ageMs: number;
+  }>;
+  actions: Array<{
+    kind: "recover-stale-claim" | "review-failed-retry";
+    eventId: string;
+    laneKey?: string;
+    ageMs: number;
+    reason?: string;
+  }>;
+  approvalRequired: true;
+  sideEffects: [];
+};
+
 const MSTeamsIngressPayloadError = createChannelIngressError<
   "invalid-activity" | "invalid-json" | "unsupported-activity"
 >("MSTeamsIngressPayloadError", { withReason: true });
@@ -131,6 +161,60 @@ function parseClaimedActivity(
     );
   }
   return parsed;
+}
+
+export async function createMSTeamsIngressRetryCleanupDryRun(params: {
+  queue: Pick<ChannelIngressQueue<MSTeamsIngressPayload>, "listClaims" | "listFailed">;
+  staleClaimMs?: number;
+  now?: number;
+}): Promise<MSTeamsIngressRetryCleanupDryRun> {
+  const now = params.now ?? Date.now();
+  const staleClaimMs = Math.max(0, Math.floor(params.staleClaimMs ?? MSTEAMS_REQUEST_TIMEOUT_MS));
+  const staleCutoff = now - staleClaimMs;
+  const claims = await params.queue.listClaims();
+  const staleClaims = claims
+    .filter((claim) => claim.claim.claimedAt <= staleCutoff)
+    .map((claim) => ({
+      eventId: claim.id,
+      ...(claim.laneKey ? { laneKey: claim.laneKey } : {}),
+      ownerId: claim.claim.ownerId,
+      claimedAt: claim.claim.claimedAt,
+      ageMs: Math.max(0, now - claim.claim.claimedAt),
+    }));
+  const failedRetries =
+    (await params.queue.listFailed?.({ limit: "all" }))?.map((record) => ({
+      eventId: record.id,
+      ...(record.laneKey ? { laneKey: record.laneKey } : {}),
+      reason: record.reason,
+      failedAt: record.failedAt,
+      ageMs: Math.max(0, now - record.failedAt),
+    })) ?? [];
+
+  return {
+    dryRun: true,
+    status: "ready",
+    now,
+    staleClaimMs,
+    staleClaims,
+    failedRetries,
+    actions: [
+      ...staleClaims.map((claim) => ({
+        kind: "recover-stale-claim" as const,
+        eventId: claim.eventId,
+        ...(claim.laneKey ? { laneKey: claim.laneKey } : {}),
+        ageMs: claim.ageMs,
+      })),
+      ...failedRetries.map((record) => ({
+        kind: "review-failed-retry" as const,
+        eventId: record.eventId,
+        ...(record.laneKey ? { laneKey: record.laneKey } : {}),
+        ageMs: record.ageMs,
+        reason: record.reason,
+      })),
+    ],
+    approvalRequired: true,
+    sideEffects: [],
+  };
 }
 
 export function createMSTeamsIngress(options: MSTeamsIngressOptions): MSTeamsIngress {
