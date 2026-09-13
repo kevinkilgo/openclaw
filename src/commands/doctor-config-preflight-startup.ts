@@ -157,6 +157,17 @@ async function assertStartupStateMigrationReady(params: {
   await assertConfiguredWorkspaceStateReady(params);
 }
 
+
+function isNonBlockingStartupMigrationWarning(warning: string): boolean {
+  return /^Skipped foreign agent database .+; it is outside the active state directory and is not a configured session store\.$/u.test(
+    warning,
+  );
+}
+
+function filterBlockingStartupMigrationWarnings(warnings: readonly string[]): string[] {
+  return warnings.filter((warning) => !isNonBlockingStartupMigrationWarning(warning));
+}
+
 type MigrationCheckpoint = {
   recordSuccessfulStateMigrations: (params?: {
     env?: NodeJS.ProcessEnv;
@@ -247,7 +258,7 @@ export async function completeStartupMigrationPreflight(params: {
     params.shouldRecordStateCheckpoint &&
     params.stateMigrationsAllowed &&
     params.freshConfigGuardAllowed &&
-    params.startupMigrationWarnings.length === 0 &&
+    filterBlockingStartupMigrationWarnings(params.startupMigrationWarnings).length === 0 &&
     snapshot.valid
   ) {
     if (!params.migrationCheckpoint) {
@@ -276,10 +287,10 @@ export async function completeStartupMigrationPreflight(params: {
       }
       snapshotRead = convergedSnapshotRead;
     }
-    recordStartupMigrationWarnings(params.startupMigrationWarnings);
+    recordStartupMigrationWarnings(filterBlockingStartupMigrationWarnings(params.startupMigrationWarnings));
   }
   // Advisory findings allow service, but must not certify unfinished migration work.
-  if (params.shouldRecordStartupCheckpoint && params.startupMigrationWarnings.length === 0) {
+  if (params.shouldRecordStartupCheckpoint && filterBlockingStartupMigrationWarnings(params.startupMigrationWarnings).length === 0) {
     if (!params.migrationCheckpoint) {
       throw new Error("OpenClaw startup migration checkpoint module was not loaded.");
     }

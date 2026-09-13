@@ -84,6 +84,16 @@ export function shouldSkipPluginValidationForDoctorConfigPreflight(
   return isTruthyEnvValue(env.OPENCLAW_UPDATE_IN_PROGRESS);
 }
 
+function isNonBlockingStartupMigrationWarning(warning: string): boolean {
+  return /^Skipped foreign agent database .+; it is outside the active state directory and is not a configured session store\.$/u.test(
+    warning,
+  );
+}
+
+function filterBlockingStartupMigrationWarnings(warnings: readonly string[]): string[] {
+  return warnings.filter((warning) => !isNonBlockingStartupMigrationWarning(warning));
+}
+
 /**
  * Runs early doctor config checks before the main config repair flow.
  *
@@ -691,6 +701,7 @@ export async function runDoctorConfigPreflight(
       shouldPersistRefreshedPluginIndex &&
       stateMigrationsAllowed &&
       freshConfigGuardAllowed &&
+      filterBlockingStartupMigrationWarnings(startupMigrationWarnings).length === 0 &&
       snapshot.valid
     ) {
       const persistedSnapshotRead = await persistRefreshedPluginIndex({
