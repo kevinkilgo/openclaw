@@ -261,6 +261,27 @@ export type AgentControlShadowMatrixResult = {
   summary: AgentControlShadowMatrixSummary;
 };
 
+export type AgentControlShadowEvidencePackage = {
+  version: 1;
+  status: "shadow_evidence_ready" | "shadow_evidence_blocked";
+  executionMode: AgentControlExecutionMode;
+  generatedAt: string;
+  evidenceId?: string;
+  source?: string;
+  approvalDocument?: string;
+  riskRegisterDocument?: string;
+  summary: AgentControlShadowMatrixSummary & {
+    auditEvents: number;
+    requestIds: number;
+    missingRequestIds: number;
+  };
+  nonInterruption: {
+    liveSideEffectFree: boolean;
+    sideEffectCounters: AgentControlShadowSideEffectCounters;
+  };
+  blockers: string[];
+};
+
 const AGENT_CONTROL_ACTIONS = [
   "list",
   "readStatus",
@@ -1364,5 +1385,59 @@ export async function runAgentControlShadowMatrix(params: {
       byReason: sortCountRecord(byReason),
       sideEffectCounters,
     },
+  };
+}
+
+export function buildAgentControlShadowEvidencePackage(params: {
+  matrix: AgentControlShadowMatrixResult;
+  generatedAt: Date;
+  evidenceId?: string;
+  source?: string;
+  approvalDocument?: string;
+  riskRegisterDocument?: string;
+}): AgentControlShadowEvidencePackage {
+  const blockers: string[] = [];
+  const sideEffectCounters = { ...params.matrix.summary.sideEffectCounters };
+  const liveSideEffectFree = Object.values(sideEffectCounters).every((count) => count === 0);
+  if (!liveSideEffectFree) {
+    blockers.push("live side-effect counter is nonzero");
+  }
+
+  const auditEvents = params.matrix.results.length;
+  const requestIds = new Set(
+    params.matrix.results
+      .map((result) => result.audit.requestId?.trim())
+      .filter((requestId): requestId is string => Boolean(requestId)),
+  );
+  const missingRequestIds = params.matrix.results.filter(
+    (result) => !result.audit.requestId?.trim(),
+  ).length;
+  if (missingRequestIds > 0) {
+    blockers.push("one or more shadow attempts are missing request ids");
+  }
+  if (params.matrix.summary.totalAttempts !== auditEvents) {
+    blockers.push("shadow matrix attempt count does not match audit event count");
+  }
+
+  return {
+    version: 1,
+    status: blockers.length === 0 ? "shadow_evidence_ready" : "shadow_evidence_blocked",
+    executionMode: "dry_run",
+    generatedAt: params.generatedAt.toISOString(),
+    evidenceId: params.evidenceId?.trim() || undefined,
+    source: params.source?.trim() || undefined,
+    approvalDocument: params.approvalDocument?.trim() || undefined,
+    riskRegisterDocument: params.riskRegisterDocument?.trim() || undefined,
+    summary: {
+      ...params.matrix.summary,
+      auditEvents,
+      requestIds: requestIds.size,
+      missingRequestIds,
+    },
+    nonInterruption: {
+      liveSideEffectFree,
+      sideEffectCounters,
+    },
+    blockers,
   };
 }

@@ -7,6 +7,7 @@ import {
   buildAgentControlOperationPlan,
   buildAgentControlRegistrySnapshot,
   buildAgentControlRegistrySnapshotArtifact,
+  buildAgentControlShadowEvidencePackage,
   buildManagedFileUpdatePlan,
   isManagedAgentMarkdownFile,
   listManageableAgents,
@@ -945,16 +946,27 @@ describe("managed agent Markdown files", () => {
         {
           principal: { agentId: "Artemis", teams: [], roles: ["manager"] },
           request: { action: "readStatus", targetAgentId: "babbey" },
+          auditContext: { requestId: "shadow-matrix-001" },
         },
         {
           principal: { agentId: "babbey", teams: [], roles: ["employee"] },
           request: { action: "sendMessage", targetAgentId: "Fiona", message: "need help" },
+          auditContext: { requestId: "shadow-matrix-002" },
         },
         {
           principal: { agentId: "unknown-employee", teams: [], roles: ["employee"] },
           request: { action: "sendMessage", targetAgentId: "Fiona", message: "need help" },
+          auditContext: { requestId: "shadow-matrix-003" },
         },
       ],
+    });
+    const evidence = buildAgentControlShadowEvidencePackage({
+      matrix: result,
+      generatedAt: new Date("2026-09-12T00:05:00.000Z"),
+      evidenceId: " shadow-evidence-001 ",
+      source: " unit test fixture ",
+      approvalDocument: "docs/agents/agent-control-plane-shadow-mode-prod-test-approval.md",
+      riskRegisterDocument: "docs/agents/agent-control-plane-prod-risk-register.md",
     });
 
     expect(result).toMatchObject({
@@ -982,5 +994,59 @@ describe("managed agent Markdown files", () => {
       },
     });
     expect(auditEvents).toHaveLength(3);
+    expect(evidence).toMatchObject({
+      version: 1,
+      status: "shadow_evidence_ready",
+      executionMode: "dry_run",
+      generatedAt: "2026-09-12T00:05:00.000Z",
+      evidenceId: "shadow-evidence-001",
+      source: "unit test fixture",
+      summary: {
+        totalAttempts: 3,
+        auditEvents: 3,
+        requestIds: 3,
+        missingRequestIds: 0,
+      },
+      nonInterruption: {
+        liveSideEffectFree: true,
+        sideEffectCounters: {
+          deliveryAttempts: 0,
+          workspaceWrites: 0,
+          serviceMutations: 0,
+          secretReads: 0,
+          cronMutations: 0,
+          liveHandlerCalls: 0,
+        },
+      },
+      blockers: [],
+    });
+  });
+
+  it("blocks shadow evidence when request ids are missing", async () => {
+    const result = await runAgentControlShadowMatrix({
+      registry: fleetRegistry,
+      now: new Date("2026-09-12T00:00:00.000Z"),
+      auditAppender: () => undefined,
+      attempts: [
+        {
+          principal: { agentId: "Artemis", teams: [], roles: ["manager"] },
+          request: { action: "readStatus", targetAgentId: "babbey" },
+        },
+      ],
+    });
+    const evidence = buildAgentControlShadowEvidencePackage({
+      matrix: result,
+      generatedAt: new Date("2026-09-12T00:05:00.000Z"),
+    });
+
+    expect(evidence).toMatchObject({
+      status: "shadow_evidence_blocked",
+      summary: {
+        auditEvents: 1,
+        requestIds: 0,
+        missingRequestIds: 1,
+      },
+      blockers: ["one or more shadow attempts are missing request ids"],
+    });
   });
 });
