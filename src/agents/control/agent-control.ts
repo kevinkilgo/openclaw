@@ -281,6 +281,7 @@ export type AgentControlInternalRouteReadiness =
       httpStatus: 404 | 403;
       logMarker: "agent-control.route.disabled";
       reason: "route_not_configured" | "route_disabled" | "path_mismatch";
+      proofCounters: AgentControlShadowSideEffectCounters;
     }
   | {
       status: "enabled_shadow";
@@ -291,14 +292,18 @@ export type AgentControlInternalRouteReadiness =
       registry: AgentControlInternalRouteRegistrySource;
       audit: AgentControlInternalRouteAuditSink;
       liveAdapters: AgentControlInternalRouteLiveAdapters;
+      proofCounters: AgentControlShadowSideEffectCounters;
     };
 
 export type AgentControlShadowSideEffectCounters = {
   deliveryAttempts: number;
   workspaceWrites: number;
   serviceMutations: number;
+  serviceRestartAttempts: number;
+  serviceUpdateAttempts: number;
   secretReads: number;
   cronMutations: number;
+  databaseMutations: number;
   liveHandlerCalls: number;
 };
 
@@ -357,6 +362,70 @@ export type AgentControlShadowEvidencePackage = {
   blockers: string[];
 };
 
+export type AgentControlCommunicationPathKind =
+  | "backend-agent"
+  | "employee-to-agent"
+  | "manager-to-agent"
+  | "agent-upchain";
+
+export type AgentControlCommunicationPathTransport =
+  | "agent-control"
+  | "gateway-router"
+  | "teams"
+  | "session"
+  | "employee-container";
+
+export type AgentControlCommunicationPathStatus = "ok" | "unknown" | "degraded" | "failed";
+
+export type AgentControlCommunicationPathProbe = {
+  id: string;
+  kind: AgentControlCommunicationPathKind;
+  transport: AgentControlCommunicationPathTransport;
+  sourceAgentId?: string;
+  sourceOwnerTeam?: string;
+  targetAgentId: string;
+  status: AgentControlCommunicationPathStatus;
+  lastCheckedAt?: string;
+  evidence?: string[];
+  failureSignals?: string[];
+};
+
+export type AgentControlCommunicationPathPlanAction =
+  | "observe"
+  | "assess"
+  | "prepare_repair_packet";
+
+export type AgentControlCommunicationPathAssessment = {
+  id: string;
+  kind: AgentControlCommunicationPathKind;
+  transport: AgentControlCommunicationPathTransport;
+  targetAgentId: string;
+  status: AgentControlCommunicationPathStatus;
+  action: AgentControlCommunicationPathPlanAction;
+  reason: string;
+  approvalRequired: boolean;
+};
+
+export type AgentControlCommunicationPathReliabilityPlan = {
+  version: 1;
+  executionMode: AgentControlExecutionMode;
+  generatedAt: string;
+  status: "all_paths_ok" | "action_required";
+  scope: {
+    includesBackendAgentPaths: boolean;
+    includesEmployeeToAgentPaths: boolean;
+  };
+  summary: {
+    totalPaths: number;
+    ok: number;
+    unknown: number;
+    degraded: number;
+    failed: number;
+    approvalRequired: number;
+  };
+  assessments: AgentControlCommunicationPathAssessment[];
+};
+
 const AGENT_CONTROL_ACTIONS = [
   "list",
   "readStatus",
@@ -382,8 +451,11 @@ const ZERO_SHADOW_SIDE_EFFECT_COUNTERS: AgentControlShadowSideEffectCounters = {
   deliveryAttempts: 0,
   workspaceWrites: 0,
   serviceMutations: 0,
+  serviceRestartAttempts: 0,
+  serviceUpdateAttempts: 0,
   secretReads: 0,
   cronMutations: 0,
+  databaseMutations: 0,
   liveHandlerCalls: 0,
 };
 
@@ -598,6 +670,15 @@ function emptyShadowActionSummary(): Record<
   ) as Record<AgentControlAction, { allowed: number; denied: number }>;
 }
 
+function emptyCommunicationPathStatusCounts(): Record<AgentControlCommunicationPathStatus, number> {
+  return {
+    ok: 0,
+    unknown: 0,
+    degraded: 0,
+    failed: 0,
+  };
+}
+
 function mergeShadowSideEffectCounters(
   left: AgentControlShadowSideEffectCounters,
   right: AgentControlShadowSideEffectCounters,
@@ -606,8 +687,11 @@ function mergeShadowSideEffectCounters(
     deliveryAttempts: left.deliveryAttempts + right.deliveryAttempts,
     workspaceWrites: left.workspaceWrites + right.workspaceWrites,
     serviceMutations: left.serviceMutations + right.serviceMutations,
+    serviceRestartAttempts: left.serviceRestartAttempts + right.serviceRestartAttempts,
+    serviceUpdateAttempts: left.serviceUpdateAttempts + right.serviceUpdateAttempts,
     secretReads: left.secretReads + right.secretReads,
     cronMutations: left.cronMutations + right.cronMutations,
+    databaseMutations: left.databaseMutations + right.databaseMutations,
     liveHandlerCalls: left.liveHandlerCalls + right.liveHandlerCalls,
   };
 }
@@ -778,6 +862,7 @@ export function resolveAgentControlInternalRouteReadiness(params: {
       httpStatus: 404,
       logMarker: "agent-control.route.disabled",
       reason: "route_not_configured",
+      proofCounters: { ...ZERO_SHADOW_SIDE_EFFECT_COUNTERS },
     };
   }
 
@@ -789,6 +874,7 @@ export function resolveAgentControlInternalRouteReadiness(params: {
       httpStatus: 404,
       logMarker: "agent-control.route.disabled",
       reason: "path_mismatch",
+      proofCounters: { ...ZERO_SHADOW_SIDE_EFFECT_COUNTERS },
     };
   }
   if (params.config.enabled !== true) {
@@ -798,6 +884,7 @@ export function resolveAgentControlInternalRouteReadiness(params: {
       httpStatus: 404,
       logMarker: "agent-control.route.disabled",
       reason: "route_disabled",
+      proofCounters: { ...ZERO_SHADOW_SIDE_EFFECT_COUNTERS },
     };
   }
   if (params.config.mode !== "shadow") {
@@ -834,6 +921,7 @@ export function resolveAgentControlInternalRouteReadiness(params: {
     registry: params.config.registry,
     audit: params.config.audit,
     liveAdapters: params.config.liveAdapters,
+    proofCounters: { ...ZERO_SHADOW_SIDE_EFFECT_COUNTERS },
   };
 }
 
@@ -1686,5 +1774,92 @@ export function buildAgentControlShadowEvidencePackage(params: {
       sideEffectCounters,
     },
     blockers,
+  };
+}
+
+function normalizeCommunicationPathProbe(
+  probe: AgentControlCommunicationPathProbe,
+): AgentControlCommunicationPathProbe {
+  return {
+    ...probe,
+    id: probe.id.trim(),
+    sourceAgentId: probe.sourceAgentId ? normalizeAgentId(probe.sourceAgentId) : undefined,
+    sourceOwnerTeam: probe.sourceOwnerTeam?.trim() || undefined,
+    targetAgentId: normalizeAgentId(probe.targetAgentId),
+    evidence: (probe.evidence ?? []).map((item) => item.trim()).filter(Boolean),
+    failureSignals: (probe.failureSignals ?? []).map((item) => item.trim()).filter(Boolean),
+  };
+}
+
+function communicationPathReason(probe: AgentControlCommunicationPathProbe): string {
+  if (probe.status === "ok") {
+    return "path_check_passed";
+  }
+  if (probe.status === "unknown") {
+    return probe.lastCheckedAt
+      ? "path_status_unknown_after_recent_check"
+      : "path_has_no_recent_check";
+  }
+  const prefix =
+    probe.kind === "employee-to-agent"
+      ? "employee_to_agent_path"
+      : probe.kind === "backend-agent"
+        ? "backend_agent_path"
+        : probe.kind === "agent-upchain"
+          ? "agent_upchain_path"
+          : "manager_to_agent_path";
+  const signal = probe.failureSignals?.[0]?.trim();
+  return signal ? `${prefix}_${probe.status}:${signal}` : `${prefix}_${probe.status}`;
+}
+
+export function buildAgentControlCommunicationPathReliabilityPlan(params: {
+  probes: AgentControlCommunicationPathProbe[];
+  generatedAt: Date;
+}): AgentControlCommunicationPathReliabilityPlan {
+  const counts = emptyCommunicationPathStatusCounts();
+  const assessments = params.probes.map((rawProbe): AgentControlCommunicationPathAssessment => {
+    const probe = normalizeCommunicationPathProbe(rawProbe);
+    incrementCount(counts, probe.status);
+    const action: AgentControlCommunicationPathPlanAction =
+      probe.status === "ok"
+        ? "observe"
+        : probe.status === "unknown"
+          ? "assess"
+          : "prepare_repair_packet";
+    return {
+      id: probe.id,
+      kind: probe.kind,
+      transport: probe.transport,
+      targetAgentId: probe.targetAgentId,
+      status: probe.status,
+      action,
+      reason: communicationPathReason(probe),
+      approvalRequired: action === "prepare_repair_packet",
+    };
+  });
+
+  const approvalRequired = assessments.filter((assessment) => assessment.approvalRequired).length;
+  return {
+    version: 1,
+    executionMode: "dry_run",
+    generatedAt: params.generatedAt.toISOString(),
+    status: approvalRequired === 0 && counts.unknown === 0 ? "all_paths_ok" : "action_required",
+    scope: {
+      includesBackendAgentPaths: assessments.some(
+        (assessment) => assessment.kind === "backend-agent",
+      ),
+      includesEmployeeToAgentPaths: assessments.some(
+        (assessment) => assessment.kind === "employee-to-agent",
+      ),
+    },
+    summary: {
+      totalPaths: assessments.length,
+      ok: counts.ok,
+      unknown: counts.unknown,
+      degraded: counts.degraded,
+      failed: counts.failed,
+      approvalRequired,
+    },
+    assessments,
   };
 }

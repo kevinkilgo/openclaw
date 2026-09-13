@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   authorizeAgentControlAction,
   buildAgentControlOperationPlan,
+  buildAgentControlCommunicationPathReliabilityPlan,
   buildAgentControlRegistrySnapshot,
   buildAgentControlRegistrySnapshotArtifact,
   buildAgentControlShadowEvidencePackage,
@@ -153,6 +154,18 @@ const app03LiveAdaptersDisabled = {
   cronMutation: "disabled",
   databaseMutation: "disabled",
   liveHandlerCalls: "disabled",
+} as const;
+
+const app03ZeroProofCounters = {
+  deliveryAttempts: 0,
+  workspaceWrites: 0,
+  serviceMutations: 0,
+  serviceRestartAttempts: 0,
+  serviceUpdateAttempts: 0,
+  secretReads: 0,
+  cronMutations: 0,
+  databaseMutations: 0,
+  liveHandlerCalls: 0,
 } as const;
 
 describe("agent control registry", () => {
@@ -583,6 +596,7 @@ describe("APP-03 internal route readiness contract", () => {
       httpStatus: 404,
       logMarker: "agent-control.route.disabled",
       reason: "route_not_configured",
+      proofCounters: app03ZeroProofCounters,
     });
     expect(
       resolveAgentControlInternalRouteReadiness({
@@ -595,6 +609,7 @@ describe("APP-03 internal route readiness contract", () => {
       httpStatus: 404,
       logMarker: "agent-control.route.disabled",
       reason: "route_disabled",
+      proofCounters: app03ZeroProofCounters,
     });
   });
 
@@ -611,6 +626,7 @@ describe("APP-03 internal route readiness contract", () => {
       deniedActions: ["sendMessage"],
       trustedIdentitySource: "gateway-request-scope",
       liveAdapters: app03LiveAdaptersDisabled,
+      proofCounters: app03ZeroProofCounters,
     });
   });
 
@@ -1246,6 +1262,83 @@ describe("managed agent Markdown files", () => {
         missingRequestIds: 1,
       },
       blockers: ["one or more shadow attempts are missing request ids"],
+    });
+  });
+
+  it("plans continuous checks for backend and employee-to-agent communication paths", () => {
+    const plan = buildAgentControlCommunicationPathReliabilityPlan({
+      generatedAt: new Date("2026-09-13T15:00:00.000Z"),
+      probes: [
+        {
+          id: "backend-artemis-to-fiona",
+          kind: "backend-agent",
+          transport: "agent-control",
+          sourceAgentId: "Artemis",
+          targetAgentId: "Fiona",
+          status: "ok",
+          evidence: ["shadow route authorization check passed"],
+        },
+        {
+          id: "employee-babbey-to-agent",
+          kind: "employee-to-agent",
+          transport: "teams",
+          sourceOwnerTeam: "employee-agents",
+          targetAgentId: "babbey",
+          status: "failed",
+          failureSignals: ["teams dispatch admission changed while starting work"],
+        },
+        {
+          id: "employee-hdadabhoy-to-agent",
+          kind: "employee-to-agent",
+          transport: "gateway-router",
+          sourceOwnerTeam: "employee-agents",
+          targetAgentId: "hdadabhoy",
+          status: "unknown",
+        },
+      ],
+    });
+
+    expect(plan).toMatchObject({
+      version: 1,
+      executionMode: "dry_run",
+      generatedAt: "2026-09-13T15:00:00.000Z",
+      status: "action_required",
+      scope: {
+        includesBackendAgentPaths: true,
+        includesEmployeeToAgentPaths: true,
+      },
+      summary: {
+        totalPaths: 3,
+        ok: 1,
+        unknown: 1,
+        failed: 1,
+        approvalRequired: 1,
+      },
+      assessments: [
+        {
+          id: "backend-artemis-to-fiona",
+          kind: "backend-agent",
+          action: "observe",
+          approvalRequired: false,
+        },
+        {
+          id: "employee-babbey-to-agent",
+          kind: "employee-to-agent",
+          transport: "teams",
+          targetAgentId: "babbey",
+          action: "prepare_repair_packet",
+          approvalRequired: true,
+          reason:
+            "employee_to_agent_path_failed:teams dispatch admission changed while starting work",
+        },
+        {
+          id: "employee-hdadabhoy-to-agent",
+          kind: "employee-to-agent",
+          action: "assess",
+          approvalRequired: false,
+          reason: "path_has_no_recent_check",
+        },
+      ],
     });
   });
 });
