@@ -995,8 +995,7 @@ describe("runDoctorConfigPreflight state migration", () => {
   });
 
   it("does not block gateway readiness for skipped foreign agent database notices", async () => {
-    needsStateMigrationCheckpoint.mockReturnValue(true);
-    needsStartupMigrationCheckpoint.mockReturnValue(true);
+    readMigrationCheckpointStatus.mockReturnValue("stale");
     autoMigrateLegacyStateDir.mockResolvedValueOnce({
       migrated: false,
       skipped: false,
