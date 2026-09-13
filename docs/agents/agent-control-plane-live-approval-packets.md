@@ -147,38 +147,38 @@ rollback command.
 Risk items: `ACP-R01`, `ACP-R02`, `ACP-R12`, `ACP-R13`, `ACP-R14`, `ACP-R16`,
 `ACP-R20`, `ACP-R21`.
 
-Operator summary for Kevin/Fiona:
+Kevin/Fiona review summary:
 
-- Current state: `ACP-APP-03` is review-only and held. It does not approve a
-  router/gateway update, route enablement, service deploy/restart, live
-  management action, workspace write, DB mutation, secret change, cron/watch
-  change, cleanup, or rollback.
-- Proposed next artifact: source-reviewed disabled/shadow-only internal
-  gateway route definition for `/internal/agent-control/v1/shadow`, with
+- Approved prep/evidence lane: `ACP-APP-01` and `ACP-APP-02` cover
+  shadow-mode evidence and a private read-only registry snapshot. Current packet
+  evidence reports 14 registry records, 6 shadow attempts, 6/6 request-id
+  coverage, 6 audit events, all live side-effect counters at zero, and no
+  blockers.
+- Narrow repair allowance: `ACP-APP-08` is only for bounded pause/resume of the
+  Teams onboarding provisioner timer during onboarding repair or SQLite safety.
+  It does not approve employee-agent restarts, unrelated row mutation, queue
+  cleanup, route changes, secret changes, or workspace writes.
+- Held management-plane lane: `ACP-APP-03`, `ACP-APP-04`, `ACP-APP-05`,
+  `ACP-APP-06`, and `ACP-APP-07` remain held. APP-03 is review-only; APP-04
+  live manager-to-agent send, APP-05 pending-review managed Markdown update,
+  APP-06 stale ingress cleanup, and APP-07 SQLite repair each need their own
+  later approval before execution.
+- APP-03 next artifact: source-reviewed disabled/shadow-only internal gateway
+  route definition for `/internal/agent-control/v1/shadow`, with
   `enabled=false`, no live adapters, `sendMessage` denied, private audit
   artifacts, and route-disabled health proof.
-- Why it is reviewable now: APP-01/02 evidence reports 14 registry records, 6
-  shadow attempts, 6/6 request-id coverage, 6 audit events, all live side-effect
-  counters at zero, and no blockers.
-- Privacy boundary: full registry snapshots include production topology and
-  workspace roots, so their artifact metadata must mark them private,
-  non-public-committable, and unredacted or explicitly redacted. Public/source
-  review material may include counts, checksums, and redacted summaries only.
-- Approval blocker: Fiona must independently review APP-01/02 evidence and this
-  APP-03 plan, then Kevin must approve the exact reviewed diff and execution
-  window before any gateway/router change.
-- Main risk not buried: a disabled internal route can still create gateway
-  interruption, route exposure, trusted-identity, audit, or live-handler
-  isolation risk if the implementation boundary is wrong.
+- Approval blocker: Fiona must independently review APP-01/02 closeout evidence
+  and this APP-03 design, then Kevin must approve the exact reviewed diff and
+  execution window before any gateway/router change.
+- Main risk not buried: even a disabled internal route can interrupt gateway
+  behavior, expose a control path, trust the wrong identity source, continue
+  without durable audit, or accidentally import live delivery/workspace/service
+  mutation handlers if the implementation boundary is wrong.
 - Required review checks: disabled-by-default source diff, internal-only bind,
   trusted gateway-derived principal, forbidden live-adapter import test,
-  fail-closed audit behavior, route-disabled response proof, and
-  non-interruption evidence for existing channels and active agents.
-- Privacy proof required before APP-03 approval: private artifact owner,
-  retention rule, restrictive permissions, checksum/manifest, redaction schema,
-  and a public-boundary scan proving no registry snapshot, audit sample,
-  workspace root inventory, service topology, raw agent endpoint, or private
-  artifact payload is staged, committed, pushed, dashboarded, or transcripted.
+  fail-closed audit behavior, route-disabled response proof, non-interruption
+  evidence for existing channels and active agents, and private artifact
+  retention/redaction proof.
 
 Precondition evidence already available from APP-01/02:
 
@@ -367,8 +367,9 @@ Proof it cannot perform live management actions:
 - `allowedActions` excludes `sendMessage` for APP-03.
 - No live adapters are configured.
 - Shadow wrapper side-effect counters must remain zero:
-  `deliveryAttempts`, `workspaceWrites`, `serviceMutations`, `secretReads`,
-  `cronMutations`, `liveHandlerCalls`.
+  `deliveryAttempts`, `workspaceWrites`, `serviceMutations`,
+  `serviceRestartAttempts`, `serviceUpdateAttempts`, `secretReads`,
+  `cronMutations`, `databaseMutations`, `liveHandlerCalls`.
 - Audit append is fail-closed; no audit means no recorded shadow result.
 - Static import boundary test must fail if the route imports live delivery,
   workspace, Swarm/Docker, secret, cron/watch, DB-mutation, session-cleanup, or
@@ -378,9 +379,9 @@ Open review requirements:
 
 - Fiona must independently review APP-01/02 evidence and this APP-03 design
   before Kevin approves any router/gateway change.
-- APP-04, APP-05, APP-06, and APP-07 remain held. APP-03 does not approve live
-  manager-to-agent send, managed-file update, stale ingress cleanup, or SQLite
-  repair.
+- APP-04, APP-05, APP-06, APP-07, and APP-09 remain held. APP-03 does not
+  approve live manager-to-agent send, managed-file update, stale ingress
+  cleanup, SQLite repair, recurring communication-path probes, or auto-repair.
 
 Approval wording:
 
@@ -586,3 +587,72 @@ Approval wording:
 > I approve ACP-APP-08 for bounded pause/resume of the Teams onboarding
 > provisioner timer when directly needed for onboarding repair or SQLite safety.
 > Do not restart employee agents or mutate unrelated rows under this approval.
+
+## Packet ACP-APP-09: Continuous Agent Communication Path Checker
+
+Recommendation: prepare source-only planning now; hold live recurring execution
+until APP-03/Fiona review and a separate APP-09 approval.
+
+Risk items: `ACP-R08`, `ACP-R14`, `ACP-R18`, `ACP-R23`, and any repair-specific
+item that the checker proposes (`ACP-R01`, `ACP-R05`, `ACP-R06`, `ACP-R07`,
+`ACP-R10`, `ACP-R11`).
+
+Intended action: continuously check communication paths and produce assessments
+for both backend agent paths and employee-to-agent paths. Backend paths include
+agent-control, session, manager-to-agent, staff-to-staff, and upchain routes.
+Employee-to-agent paths include Teams/gateway-router/employee-container
+dispatch, onboarding route references, session admission, and agent auth
+handoff paths.
+
+Targets: read-only route/session/queue/service metadata plus approved private
+registry snapshots. No employee service, router, DB, or workspace is a mutation
+target under this packet unless a separate repair packet is approved.
+
+Exact change/command boundary for source prep: build a dry-run communication
+path reliability plan that classifies each path as `ok`, `unknown`, `degraded`,
+or `failed`; records whether backend and employee-to-agent paths are included;
+and emits repair packet requirements for failed/degraded paths.
+
+Exact change/command boundary for later live recurring execution: one approved
+checker declaration with idempotency/window controls, no message delivery, no
+workspace writes, no service restart/update, no DB mutation, no route enablement,
+no queue cleanup, no cron fanout beyond the single approved checker job, no
+secret access, and no auto-repair unless covered by a separate approved packet.
+
+Expected effect: Kevin should not have to discover broken agent communication
+paths manually. Broken backend or employee-to-agent paths should be detected,
+classified, assigned an owner, and either safely assessed or escalated with the
+exact repair approval packet needed.
+
+Interruption window: none for source-only planning. Live checker execution must
+be non-interrupting and read-only unless another packet explicitly approves the
+repair.
+
+Success evidence: path coverage list showing backend-agent and employee-to-agent
+coverage, status counts, failed/degraded path assessments, zero live mutation
+counters, checker idempotency/window proof, and generated repair packet ids for
+anything not working.
+
+Required artifact/evidence: private path reliability plan, redacted path ids,
+command transcript reference, pass/fail result, owner assignment for each
+failed/degraded path, and confirmation that no live sends, route changes,
+service restarts, DB writes, queue cleanup, secret access, workspace writes, or
+auto-repair occurred.
+
+Risk if wrong: a checker can become a noisy agent-wake loop, mutate queues or
+DBs under the guise of repair, hide employee-facing failures by checking only
+backend routes, or repeatedly interrupt current agents.
+
+Rollback/stop path: disable the checker job, preserve assessment artifacts, and
+discard only checker-owned queued work after separate approval if anything was
+queued. Any repair rollback follows that repair packet, not APP-09.
+
+Approval wording:
+
+> I approve ACP-APP-09 for non-interrupting continuous agent communication path
+> checking only, covering both backend agent paths and employee-to-agent paths.
+> The checker may read approved status metadata and produce assessments/repair
+> packets, but may not send messages, wake agents, write workspaces, restart or
+> update services, mutate DBs or queues, change routes, touch secrets, alter
+> cron/watchers beyond the approved checker declaration, or auto-repair without
+> separate approval.
