@@ -178,7 +178,7 @@ scan_artifact() {
   local secret_pattern='(access[_ -]?token|refresh[_ -]?token|client[_ -]?secret|sfdxAuthUrl|oauthStoreJson)["'"'"'[:space:]]*[:=]["'"'"'[:space:]]*[A-Za-z0-9._~+/=-]{12,}|bearer[[:space:]]+[A-Za-z0-9._~+/=-]{16,}|BEGIN (RSA|OPENSSH|PRIVATE) KEY'
   if rg -n -i "$secret_pattern" "$file" >/dev/null 2>&1; then
     json_line "artifact.leak_scan=review-required"
-    rg -n -i "$secret_pattern" "$file" || true
+    rg -H -n -i "$secret_pattern" "$file" | awk -F: '{print "artifact.leak_match=" $1 ":" $2}' || true
   else
     json_line "artifact.leak_scan=clean"
   fi
