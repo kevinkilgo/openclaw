@@ -14,6 +14,7 @@ Options:
   --router-config PATH        Hash a copied or read-only router config.
   --bws-token-file PATH       Verify BWS token mount file presence and perms only.
   --teams-ingress-path PATH   Count files under a copied/read-only ingress path.
+  --teams-stale-before EPOCH  With --teams-ingress-path, hash files older than epoch seconds.
   --artifact PATH             Leak-scan a proof/runbook artifact for obvious secret markers.
   --help                      Show this help.
 
@@ -25,6 +26,7 @@ sqlite_copy=""
 router_config=""
 bws_token_file=""
 teams_ingress_path=""
+teams_stale_before=""
 artifacts=()
 
 while [[ $# -gt 0 ]]; do
@@ -43,6 +45,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --teams-ingress-path)
       teams_ingress_path="${2:-}"
+      shift 2
+      ;;
+    --teams-stale-before)
+      teams_stale_before="${2:-}"
       shift 2
       ;;
     --artifact)
@@ -154,6 +160,7 @@ check_bws_token_file() {
 
 check_teams_ingress_path() {
   local path="$1"
+  local stale_before="$2"
   if [[ -z "$path" ]]; then
     return
   fi
@@ -165,6 +172,48 @@ check_teams_ingress_path() {
   json_line "teams_ingress.file_count=$(find "$path" -type f | wc -l | tr -d ' ')"
   json_line "teams_ingress.oldest=$(find "$path" -type f -printf '%T@ %p\n' 2>/dev/null | sort -n | head -n 1 | awk '{print $1}')"
   json_line "teams_ingress.newest=$(find "$path" -type f -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -n 1 | awk '{print $1}')"
+  if [[ -z "$stale_before" ]]; then
+    return
+  fi
+  json_line "teams_ingress.stale_before_epoch=$stale_before"
+  if ! command -v python3 >/dev/null 2>&1; then
+    json_line "teams_ingress.stale_candidates=unverified reason=no-python3"
+    return
+  fi
+  python3 - "$path" "$stale_before" <<'PY'
+import hashlib
+import os
+import sys
+
+root = sys.argv[1]
+try:
+    stale_before = float(sys.argv[2])
+except ValueError:
+    print("teams_ingress.stale_candidates=unverified reason=invalid-stale-before")
+    raise SystemExit(0)
+
+candidate_hashes = []
+try:
+    for current_root, _, files in os.walk(root):
+        for name in files:
+            full_path = os.path.join(current_root, name)
+            try:
+                mtime = os.stat(full_path).st_mtime
+            except OSError:
+                continue
+            if mtime < stale_before:
+                rel_path = os.path.relpath(full_path, root)
+                digest = hashlib.sha256(rel_path.encode("utf-8", "surrogateescape")).hexdigest()
+                candidate_hashes.append(digest)
+except OSError as exc:
+    print("teams_ingress.stale_candidates=unverified reason=" + str(exc).replace("\n", " "))
+    raise SystemExit(0)
+
+candidate_hashes.sort()
+print(f"teams_ingress.stale_candidate_count={len(candidate_hashes)}")
+if candidate_hashes:
+    print("teams_ingress.stale_candidate_hashes=" + ",".join(candidate_hashes))
+PY
 }
 
 scan_artifact() {
@@ -175,6 +224,10 @@ scan_artifact() {
   fi
   json_line "artifact.path=$file"
   json_line "artifact.sha256=$(hash_file "$file")"
+  if ! command -v rg >/dev/null 2>&1; then
+    json_line "artifact.leak_scan=unverified reason=no-rg"
+    return
+  fi
   local secret_pattern='(access[_ -]?token|refresh[_ -]?token|client[_ -]?secret|sfdxAuthUrl|oauthStoreJson)["'"'"'[:space:]]*[:=]["'"'"'[:space:]]*[A-Za-z0-9._~+/=-]{12,}|bearer[[:space:]]+[A-Za-z0-9._~+/=-]{16,}|BEGIN (RSA|OPENSSH|PRIVATE) KEY'
   if rg -n -i "$secret_pattern" "$file" >/dev/null 2>&1; then
     json_line "artifact.leak_scan=review-required"
@@ -188,7 +241,7 @@ json_line "boundary=read-only"
 check_sqlite "$sqlite_copy"
 check_router_config "$router_config"
 check_bws_token_file "$bws_token_file"
-check_teams_ingress_path "$teams_ingress_path"
+check_teams_ingress_path "$teams_ingress_path" "$teams_stale_before"
 for artifact in "${artifacts[@]}"; do
   scan_artifact "$artifact"
 done

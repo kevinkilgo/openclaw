@@ -22,6 +22,23 @@ function makeTempDir(): string {
 }
 
 describe("onboarding hardening validation helper", () => {
+  it("does not claim a clean artifact leak scan when rg is unavailable", () => {
+    const dir = makeTempDir();
+    const artifactPath = join(dir, "proof.txt");
+    writeFileSync(artifactPath, 'client_secret = "sk-test-secret-value-1234567890"\n');
+
+    const result = spawnSync("bash", [SCRIPT_PATH, "--artifact", artifactPath], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { ...process.env, PATH: "/usr/bin:/bin" },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("artifact.leak_scan=unverified reason=no-rg");
+    expect(result.stdout).not.toContain("artifact.leak_scan=clean");
+  });
+
   it("reports artifact leak locations without echoing secret-shaped content", () => {
     const dir = makeTempDir();
     const artifactPath = join(dir, "proof.txt");
