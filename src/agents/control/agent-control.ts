@@ -124,11 +124,20 @@ export type AgentControlRegistrySnapshotSummary = {
   upchainCommunicationEnabled: boolean;
 };
 
+export type AgentControlArtifactPrivacy = {
+  classification: "private";
+  redaction: "none" | "redacted";
+  publicCommit: "forbidden";
+  containsProductionTopology: boolean;
+  containsWorkspaceRoots: boolean;
+};
+
 export type AgentControlRegistrySnapshotArtifact = {
   version: 1;
   snapshotVersion: 1;
   generatedAt: string;
   source?: string;
+  privacy: AgentControlArtifactPrivacy;
   plan: AgentControlRegistrySnapshotPlan;
   summary: AgentControlRegistrySnapshotSummary;
 };
@@ -219,6 +228,71 @@ export type AgentControlShadowAuditAppender = (params: {
   request: AgentControlShadowRequest;
 }) => Promise<void> | void;
 
+export type AgentControlInternalRouteLiveAdapters = {
+  delivery: "disabled";
+  workspaceWrites: "disabled";
+  serviceMutation: "disabled";
+  secretReads: "disabled";
+  cronMutation: "disabled";
+  databaseMutation: "disabled";
+  liveHandlerCalls: "disabled";
+};
+
+export type AgentControlInternalRouteRegistrySource = {
+  source: "private-artifact";
+  path: string;
+  failClosed: true;
+};
+
+export type AgentControlInternalRouteAuditSink = {
+  sink: string;
+  failClosed: true;
+  requiredFields: readonly [
+    "requestId",
+    "sourceService",
+    "principalAgentId",
+    "targetAgentId",
+    "action",
+    "decision",
+  ];
+};
+
+export type AgentControlInternalRouteConfig = {
+  enabled?: boolean;
+  mode: "shadow";
+  path: string;
+  bind: "internal-gateway-only";
+  trustedIdentitySource: "gateway-request-scope";
+  allowedPrincipals: {
+    agentIds: string[];
+    teams: string[];
+  };
+  allowedActions: AgentControlAction[];
+  deniedActions?: AgentControlAction[];
+  registry: AgentControlInternalRouteRegistrySource;
+  audit: AgentControlInternalRouteAuditSink;
+  liveAdapters: AgentControlInternalRouteLiveAdapters;
+};
+
+export type AgentControlInternalRouteReadiness =
+  | {
+      status: "disabled";
+      path: string;
+      httpStatus: 404 | 403;
+      logMarker: "agent-control.route.disabled";
+      reason: "route_not_configured" | "route_disabled" | "path_mismatch";
+    }
+  | {
+      status: "enabled_shadow";
+      path: string;
+      allowedActions: AgentControlAction[];
+      deniedActions: AgentControlAction[];
+      trustedIdentitySource: "gateway-request-scope";
+      registry: AgentControlInternalRouteRegistrySource;
+      audit: AgentControlInternalRouteAuditSink;
+      liveAdapters: AgentControlInternalRouteLiveAdapters;
+    };
+
 export type AgentControlShadowSideEffectCounters = {
   deliveryAttempts: number;
   workspaceWrites: number;
@@ -268,6 +342,7 @@ export type AgentControlShadowEvidencePackage = {
   generatedAt: string;
   evidenceId?: string;
   source?: string;
+  privacy: AgentControlArtifactPrivacy;
   approvalDocument?: string;
   riskRegisterDocument?: string;
   summary: AgentControlShadowMatrixSummary & {
@@ -311,6 +386,25 @@ const ZERO_SHADOW_SIDE_EFFECT_COUNTERS: AgentControlShadowSideEffectCounters = {
   cronMutations: 0,
   liveHandlerCalls: 0,
 };
+
+const APP03_LIVE_ADAPTER_KEYS = [
+  "delivery",
+  "workspaceWrites",
+  "serviceMutation",
+  "secretReads",
+  "cronMutation",
+  "databaseMutation",
+  "liveHandlerCalls",
+] as const satisfies readonly (keyof AgentControlInternalRouteLiveAdapters)[];
+
+const APP03_AUDIT_REQUIRED_FIELDS = [
+  "requestId",
+  "sourceService",
+  "principalAgentId",
+  "targetAgentId",
+  "action",
+  "decision",
+] as const satisfies AgentControlInternalRouteAuditSink["requiredFields"];
 
 const AgentControlEndpointSchema = z
   .object({
@@ -405,6 +499,16 @@ const AgentControlRegistrySnapshotSummarySchema = z
   })
   .strict();
 
+const AgentControlArtifactPrivacySchema = z
+  .object({
+    classification: z.literal("private"),
+    redaction: z.enum(["none", "redacted"]),
+    publicCommit: z.literal("forbidden"),
+    containsProductionTopology: z.boolean(),
+    containsWorkspaceRoots: z.boolean(),
+  })
+  .strict();
+
 const ISO_INSTANT_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 const AgentControlRegistrySnapshotArtifactSchema = z
@@ -413,6 +517,7 @@ const AgentControlRegistrySnapshotArtifactSchema = z
     snapshotVersion: z.literal(1),
     generatedAt: z.string().regex(ISO_INSTANT_PATTERN, "generatedAt must be an ISO instant"),
     source: z.string().trim().min(1).optional(),
+    privacy: AgentControlArtifactPrivacySchema,
     plan: AgentControlRegistrySnapshotPlanSchema,
     summary: AgentControlRegistrySnapshotSummarySchema,
   })
@@ -602,6 +707,133 @@ function normalizeUpchainCommunicationPolicy(
       ...new Set((policy.allowedSourceOwnerTeams ?? []).map((team) => team.trim()).filter(Boolean)),
     ],
     actions: [...new Set(policy.actions)],
+  };
+}
+
+function assertApp03LiveAdaptersDisabled(
+  liveAdapters: AgentControlInternalRouteLiveAdapters,
+): void {
+  for (const key of APP03_LIVE_ADAPTER_KEYS) {
+    if (liveAdapters[key] !== "disabled") {
+      throw new Error(`APP-03 route contract requires liveAdapters.${key}=disabled`);
+    }
+  }
+}
+
+function assertApp03RegistrySource(registry: AgentControlInternalRouteRegistrySource): void {
+  if (registry.source !== "private-artifact") {
+    throw new Error("APP-03 route contract requires registry.source=private-artifact");
+  }
+  if (registry.failClosed !== true) {
+    throw new Error("APP-03 route contract requires registry.failClosed=true");
+  }
+  if (!normalizePrivateArtifactPath(registry.path)) {
+    throw new Error(
+      "APP-03 route contract requires registry.path under .artifacts/ without path escapes",
+    );
+  }
+}
+
+function assertApp03AuditSink(audit: AgentControlInternalRouteAuditSink): void {
+  if (audit.failClosed !== true) {
+    throw new Error("APP-03 route contract requires audit.failClosed=true");
+  }
+  if (!normalizePrivateArtifactPath(audit.sink)) {
+    throw new Error(
+      "APP-03 route contract requires audit.sink under .artifacts/ without path escapes",
+    );
+  }
+  for (const field of APP03_AUDIT_REQUIRED_FIELDS) {
+    if (!audit.requiredFields.includes(field)) {
+      throw new Error(`APP-03 route contract requires audit.requiredFields.${field}`);
+    }
+  }
+}
+
+function normalizeRoutePath(pathInput: string): string {
+  const routePath = pathInput.trim();
+  if (!routePath.startsWith("/")) {
+    throw new Error("APP-03 route contract path must be absolute");
+  }
+  return routePath.length > 1 ? routePath.replace(/\/+$/, "") : routePath;
+}
+
+function normalizePrivateArtifactPath(pathInput: string): string | undefined {
+  const normalized = normalizeRelativePath(pathInput.trim());
+  if (!normalized?.startsWith(".artifacts/")) {
+    return undefined;
+  }
+  return normalized;
+}
+
+export function resolveAgentControlInternalRouteReadiness(params: {
+  config?: AgentControlInternalRouteConfig;
+  requestPath?: string;
+}): AgentControlInternalRouteReadiness {
+  const requestPath = normalizeRoutePath(params.requestPath ?? "/internal/agent-control/v1/shadow");
+  if (!params.config) {
+    return {
+      status: "disabled",
+      path: requestPath,
+      httpStatus: 404,
+      logMarker: "agent-control.route.disabled",
+      reason: "route_not_configured",
+    };
+  }
+
+  const configuredPath = normalizeRoutePath(params.config.path);
+  if (configuredPath !== requestPath) {
+    return {
+      status: "disabled",
+      path: requestPath,
+      httpStatus: 404,
+      logMarker: "agent-control.route.disabled",
+      reason: "path_mismatch",
+    };
+  }
+  if (params.config.enabled !== true) {
+    return {
+      status: "disabled",
+      path: configuredPath,
+      httpStatus: 404,
+      logMarker: "agent-control.route.disabled",
+      reason: "route_disabled",
+    };
+  }
+  if (params.config.mode !== "shadow") {
+    throw new Error("APP-03 route contract only supports shadow mode");
+  }
+  if (params.config.bind !== "internal-gateway-only") {
+    throw new Error("APP-03 route contract must bind internal-gateway-only");
+  }
+  if (params.config.trustedIdentitySource !== "gateway-request-scope") {
+    throw new Error("APP-03 route contract requires trustedIdentitySource=gateway-request-scope");
+  }
+  if (params.config.allowedPrincipals.agentIds.length === 0) {
+    throw new Error("APP-03 route contract requires at least one allowed principal agent");
+  }
+
+  const allowedActions = [...normalizeActionSet(params.config.allowedActions)];
+  const deniedActions = [...normalizeActionSet(params.config.deniedActions ?? [])];
+  if (allowedActions.includes("sendMessage")) {
+    throw new Error("APP-03 route contract must not allow sendMessage");
+  }
+  if (!deniedActions.includes("sendMessage")) {
+    deniedActions.push("sendMessage");
+  }
+  assertApp03RegistrySource(params.config.registry);
+  assertApp03AuditSink(params.config.audit);
+  assertApp03LiveAdaptersDisabled(params.config.liveAdapters);
+
+  return {
+    status: "enabled_shadow",
+    path: configuredPath,
+    allowedActions,
+    deniedActions,
+    trustedIdentitySource: params.config.trustedIdentitySource,
+    registry: params.config.registry,
+    audit: params.config.audit,
+    liveAdapters: params.config.liveAdapters,
   };
 }
 
@@ -939,6 +1171,13 @@ export function buildAgentControlRegistrySnapshotArtifact(params: {
     snapshotVersion: 1,
     generatedAt: (params.generatedAt ?? new Date()).toISOString(),
     ...(source ? { source } : {}),
+    privacy: {
+      classification: "private",
+      redaction: "none",
+      publicCommit: "forbidden",
+      containsProductionTopology: true,
+      containsWorkspaceRoots: true,
+    },
     plan: params.snapshot,
     summary: summarizeAgentControlRegistrySnapshotPlan(params.snapshot),
   };
@@ -1393,6 +1632,7 @@ export function buildAgentControlShadowEvidencePackage(params: {
   generatedAt: Date;
   evidenceId?: string;
   source?: string;
+  redaction?: AgentControlArtifactPrivacy["redaction"];
   approvalDocument?: string;
   riskRegisterDocument?: string;
 }): AgentControlShadowEvidencePackage {
@@ -1426,6 +1666,13 @@ export function buildAgentControlShadowEvidencePackage(params: {
     generatedAt: params.generatedAt.toISOString(),
     evidenceId: params.evidenceId?.trim() || undefined,
     source: params.source?.trim() || undefined,
+    privacy: {
+      classification: "private",
+      redaction: params.redaction ?? "redacted",
+      publicCommit: "forbidden",
+      containsProductionTopology: false,
+      containsWorkspaceRoots: false,
+    },
     approvalDocument: params.approvalDocument?.trim() || undefined,
     riskRegisterDocument: params.riskRegisterDocument?.trim() || undefined,
     summary: {

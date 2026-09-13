@@ -116,6 +116,9 @@ Required artifact/evidence: private redacted snapshot path, checksum, validation
 result, source inventory summary, target counts, redaction proof, command
 transcript reference, pass/fail result, and explicit confirmation that the
 snapshot was not committed, pushed, dashboarded, or written to a public path.
+The snapshot artifact must carry privacy metadata showing
+`classification=private`, `publicCommit=forbidden`, whether redaction was
+applied, and whether production topology or workspace roots are present.
 
 Risk if wrong: production topology or workspace metadata could be exposed in
 logs, public repo commits, or dashboards.
@@ -143,6 +146,39 @@ rollback command.
 
 Risk items: `ACP-R01`, `ACP-R02`, `ACP-R12`, `ACP-R13`, `ACP-R14`, `ACP-R16`,
 `ACP-R20`, `ACP-R21`.
+
+Operator summary for Kevin/Fiona:
+
+- Current state: `ACP-APP-03` is review-only and held. It does not approve a
+  router/gateway update, route enablement, service deploy/restart, live
+  management action, workspace write, DB mutation, secret change, cron/watch
+  change, cleanup, or rollback.
+- Proposed next artifact: source-reviewed disabled/shadow-only internal
+  gateway route definition for `/internal/agent-control/v1/shadow`, with
+  `enabled=false`, no live adapters, `sendMessage` denied, private audit
+  artifacts, and route-disabled health proof.
+- Why it is reviewable now: APP-01/02 evidence reports 14 registry records, 6
+  shadow attempts, 6/6 request-id coverage, 6 audit events, all live side-effect
+  counters at zero, and no blockers.
+- Privacy boundary: full registry snapshots include production topology and
+  workspace roots, so their artifact metadata must mark them private,
+  non-public-committable, and unredacted or explicitly redacted. Public/source
+  review material may include counts, checksums, and redacted summaries only.
+- Approval blocker: Fiona must independently review APP-01/02 evidence and this
+  APP-03 plan, then Kevin must approve the exact reviewed diff and execution
+  window before any gateway/router change.
+- Main risk not buried: a disabled internal route can still create gateway
+  interruption, route exposure, trusted-identity, audit, or live-handler
+  isolation risk if the implementation boundary is wrong.
+- Required review checks: disabled-by-default source diff, internal-only bind,
+  trusted gateway-derived principal, forbidden live-adapter import test,
+  fail-closed audit behavior, route-disabled response proof, and
+  non-interruption evidence for existing channels and active agents.
+- Privacy proof required before APP-03 approval: private artifact owner,
+  retention rule, restrictive permissions, checksum/manifest, redaction schema,
+  and a public-boundary scan proving no registry snapshot, audit sample,
+  workspace root inventory, service topology, raw agent endpoint, or private
+  artifact payload is staged, committed, pushed, dashboarded, or transcripted.
 
 Precondition evidence already available from APP-01/02:
 
@@ -223,6 +259,13 @@ Implementation boundary to prove before approval:
 
 - The route is absent or returns disabled before `agentControl.internalRoute.enabled`
   is explicitly set true under a future packet.
+- The route contract represents the proposed config, not just prose: trusted
+  identity source must be `gateway-request-scope`, registry source must be a
+  private `.artifacts/` path with `failClosed=true`, audit sink must be a
+  private `.artifacts/` path with `failClosed=true`, and audit fields must
+  include request/source/principal/target/action/decision correlation.
+- Private artifact paths must be normalized relative paths under `.artifacts/`
+  with no absolute path, parent-directory, or NUL-byte escape.
 - The route imports only the agent-control registry parser, authorization,
   operation planner, shadow wrapper, shadow matrix/evidence package builder, and
   audit appender.
@@ -263,6 +306,8 @@ Required preflight before approval:
   expose workspace roots unless the action requires it.
 - Private artifact path and retention owner for route-disabled proof and audit
   samples.
+- Artifact privacy metadata proving full snapshots/evidence stay private and
+  public review packets contain only redacted summaries, counts, and checksums.
 
 Health checks for the future approved run:
 
@@ -288,6 +333,7 @@ Expected logs/artifacts:
   - `app03-static-boundary.review.txt`
   - `app03-route-disabled-health.review.json`
   - `app03-non-interruption.review.json`
+  - `app03-artifact-privacy.review.json`
   - `fiona-app03-independent-review.md`
 - Expected log markers:
   - `agent-control.route.disabled`

@@ -169,7 +169,9 @@ describe("msteams employee container dispatch", () => {
       expect.objectContaining({
         agentId: "main",
         sessionKey: "agent:main:msteams:direct:user-aad",
-        message: "Hello from Teams",
+        message: expect.stringContaining("Hello from Teams"),
+        idempotencyKey: "msteams-employee-container:kkilgo:teams-message-1",
+        timeout: 5,
         deliver: false,
         sourceReplyDeliveryMode: "automatic",
       }),

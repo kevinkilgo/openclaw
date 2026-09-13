@@ -15,11 +15,13 @@ import {
   normalizeAgentControlRegistry,
   parseAgentControlRegistryJson,
   parseAgentControlRegistrySnapshotJson,
+  resolveAgentControlInternalRouteReadiness,
   resolveAgentControlTarget,
   runAgentControlShadowMatrix,
   runAgentControlShadowOperation,
   serializeAgentControlRegistrySnapshot,
   validateAgentControlRegistryIntegrity,
+  type AgentControlInternalRouteConfig,
   type AgentControlRegistry,
 } from "./agent-control.js";
 
@@ -142,6 +144,16 @@ const fleetRegistry: AgentControlRegistry = {
     },
   ],
 };
+
+const app03LiveAdaptersDisabled = {
+  delivery: "disabled",
+  workspaceWrites: "disabled",
+  serviceMutation: "disabled",
+  secretReads: "disabled",
+  cronMutation: "disabled",
+  databaseMutation: "disabled",
+  liveHandlerCalls: "disabled",
+} as const;
 
 describe("agent control registry", () => {
   it("parses file-backed JSON registry content into normalized records", () => {
@@ -531,6 +543,156 @@ describe("agent control registry", () => {
   });
 });
 
+describe("APP-03 internal route readiness contract", () => {
+  const disabledConfig = {
+    enabled: false,
+    mode: "shadow",
+    path: "/internal/agent-control/v1/shadow",
+    bind: "internal-gateway-only",
+    trustedIdentitySource: "gateway-request-scope",
+    allowedPrincipals: {
+      agentIds: ["artemis", "fiona"],
+      teams: ["artemis-leadership", "fiona-leadership"],
+    },
+    allowedActions: ["list", "readStatus", "readManagedFile", "requestManagedFileUpdate"],
+    deniedActions: ["sendMessage"],
+    registry: {
+      source: "private-artifact",
+      path: ".artifacts/agent-control-live-approval/run/agent-control-registry-snapshot.private.json",
+      failClosed: true,
+    },
+    audit: {
+      sink: ".artifacts/agent-control-live-approval/run/agent-control-app03-shadow-audit.private.ndjson",
+      failClosed: true,
+      requiredFields: [
+        "requestId",
+        "sourceService",
+        "principalAgentId",
+        "targetAgentId",
+        "action",
+        "decision",
+      ],
+    },
+    liveAdapters: app03LiveAdaptersDisabled,
+  } satisfies AgentControlInternalRouteConfig;
+
+  it("fails closed when the APP-03 route is absent or disabled", () => {
+    expect(resolveAgentControlInternalRouteReadiness({})).toEqual({
+      status: "disabled",
+      path: "/internal/agent-control/v1/shadow",
+      httpStatus: 404,
+      logMarker: "agent-control.route.disabled",
+      reason: "route_not_configured",
+    });
+    expect(
+      resolveAgentControlInternalRouteReadiness({
+        config: disabledConfig,
+        requestPath: "/internal/agent-control/v1/shadow",
+      }),
+    ).toEqual({
+      status: "disabled",
+      path: "/internal/agent-control/v1/shadow",
+      httpStatus: 404,
+      logMarker: "agent-control.route.disabled",
+      reason: "route_disabled",
+    });
+  });
+
+  it("keeps enabled APP-03 shadow readiness send-free and adapter-free", () => {
+    const readiness = resolveAgentControlInternalRouteReadiness({
+      config: { ...disabledConfig, enabled: true },
+      requestPath: "/internal/agent-control/v1/shadow",
+    });
+
+    expect(readiness).toMatchObject({
+      status: "enabled_shadow",
+      path: "/internal/agent-control/v1/shadow",
+      allowedActions: ["list", "readStatus", "readManagedFile", "requestManagedFileUpdate"],
+      deniedActions: ["sendMessage"],
+      trustedIdentitySource: "gateway-request-scope",
+      liveAdapters: app03LiveAdaptersDisabled,
+    });
+  });
+
+  it("rejects APP-03 route contracts that could perform live management actions", () => {
+    expect(() =>
+      resolveAgentControlInternalRouteReadiness({
+        config: {
+          ...disabledConfig,
+          enabled: true,
+          allowedActions: [...disabledConfig.allowedActions, "sendMessage"],
+        },
+      }),
+    ).toThrow("must not allow sendMessage");
+    expect(() =>
+      resolveAgentControlInternalRouteReadiness({
+        config: {
+          ...disabledConfig,
+          enabled: true,
+          liveAdapters: {
+            ...app03LiveAdaptersDisabled,
+            databaseMutation: "enabled" as never,
+          },
+        },
+      }),
+    ).toThrow("liveAdapters.databaseMutation=disabled");
+    expect(() =>
+      resolveAgentControlInternalRouteReadiness({
+        config: {
+          ...disabledConfig,
+          enabled: true,
+          trustedIdentitySource: "caller-supplied" as never,
+        },
+      }),
+    ).toThrow("trustedIdentitySource=gateway-request-scope");
+    expect(() =>
+      resolveAgentControlInternalRouteReadiness({
+        config: {
+          ...disabledConfig,
+          enabled: true,
+          registry: { ...disabledConfig.registry, failClosed: false as never },
+        },
+      }),
+    ).toThrow("registry.failClosed=true");
+    expect(() =>
+      resolveAgentControlInternalRouteReadiness({
+        config: {
+          ...disabledConfig,
+          enabled: true,
+          registry: {
+            ...disabledConfig.registry,
+            path: ".artifacts/../public/agent-control-registry-snapshot.json",
+          },
+        },
+      }),
+    ).toThrow("registry.path under .artifacts/ without path escapes");
+    expect(() =>
+      resolveAgentControlInternalRouteReadiness({
+        config: {
+          ...disabledConfig,
+          enabled: true,
+          audit: {
+            ...disabledConfig.audit,
+            sink: ".artifacts/app03/../../public/agent-control-app03-shadow-audit.ndjson",
+          },
+        },
+      }),
+    ).toThrow("audit.sink under .artifacts/ without path escapes");
+    expect(() =>
+      resolveAgentControlInternalRouteReadiness({
+        config: {
+          ...disabledConfig,
+          enabled: true,
+          audit: {
+            ...disabledConfig.audit,
+            requiredFields: ["requestId"] as never,
+          },
+        },
+      }),
+    ).toThrow("audit.requiredFields.sourceService");
+  });
+});
+
 describe("agent control registry snapshots", () => {
   const defaults = {
     ownerTeam: "employee-agents",
@@ -646,6 +808,13 @@ describe("agent control registry snapshots", () => {
         snapshotVersion: 1,
         generatedAt: "2026-09-12T00:00:00.000Z",
         source: "unit test discovery",
+        privacy: {
+          classification: "private",
+          redaction: "none",
+          publicCommit: "forbidden",
+          containsProductionTopology: true,
+          containsWorkspaceRoots: true,
+        },
         plan: {
           status: "planned",
           executionMode: "dry_run",
@@ -671,6 +840,7 @@ describe("agent control registry snapshots", () => {
     });
     expect(serialized).toContain('"serviceName": "employee-agent-babbey"');
     expect(serialized).toContain('"serviceName": "employee-agent-hdadabhoy"');
+    expect(serialized).toContain('"publicCommit": "forbidden"');
   });
 
   it("rejects malformed registry snapshot artifacts without returning partial data", () => {
@@ -697,6 +867,27 @@ describe("agent control registry snapshots", () => {
     expect(parsed).toMatchObject({ ok: false });
     expect(parsed.ok ? [] : parsed.errors.join("\n")).toContain("sourceCount must match");
     expect(parsed.ok ? [] : parsed.errors.join("\n")).toContain("normalizedAgentIds must match");
+  });
+
+  it("rejects registry snapshot artifacts without a private artifact boundary", () => {
+    const snapshot = buildAgentControlRegistrySnapshot({
+      sources: [{ agentId: "Brian Abbey", serviceName: "employee-agent-babbey" }],
+      defaults,
+    });
+    const artifact = buildAgentControlRegistrySnapshotArtifact({
+      snapshot,
+      generatedAt: new Date("2026-09-12T00:00:00.000Z"),
+    });
+    const parsed = parseAgentControlRegistrySnapshotJson({
+      raw: JSON.stringify({
+        ...artifact,
+        privacy: { ...artifact.privacy, publicCommit: "allowed" },
+      }),
+      source: "agent-control.snapshot.json",
+    });
+
+    expect(parsed).toMatchObject({ ok: false });
+    expect(parsed.ok ? [] : parsed.errors.join("\n")).toContain("Invalid input");
   });
 
   it("fails closed when a snapshot would create duplicate registry ids", () => {
@@ -965,6 +1156,7 @@ describe("managed agent Markdown files", () => {
       generatedAt: new Date("2026-09-12T00:05:00.000Z"),
       evidenceId: " shadow-evidence-001 ",
       source: " unit test fixture ",
+      redaction: "redacted",
       approvalDocument: "docs/agents/agent-control-plane-shadow-mode-prod-test-approval.md",
       riskRegisterDocument: "docs/agents/agent-control-plane-prod-risk-register.md",
     });
@@ -1001,6 +1193,13 @@ describe("managed agent Markdown files", () => {
       generatedAt: "2026-09-12T00:05:00.000Z",
       evidenceId: "shadow-evidence-001",
       source: "unit test fixture",
+      privacy: {
+        classification: "private",
+        redaction: "redacted",
+        publicCommit: "forbidden",
+        containsProductionTopology: false,
+        containsWorkspaceRoots: false,
+      },
       summary: {
         totalAttempts: 3,
         auditEvents: 3,
