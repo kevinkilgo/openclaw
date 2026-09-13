@@ -183,6 +183,12 @@ export type AgentControlOperationRequest =
   | { action: "sendMessage"; targetAgentId: string; message: string }
   | { action: "readManagedFile"; targetAgentId: string; relativePath: string };
 
+export type AgentControlShadowRequest =
+  | AgentControlOperationRequest
+  | ({
+      action: "requestManagedFileUpdate";
+    } & ManagedFileUpdateRequest);
+
 export type AgentControlOperationPlan = {
   status: "planned";
   executionMode: AgentControlExecutionMode;
@@ -208,6 +214,31 @@ export type AgentControlRegistryFileReader = (
   encoding: BufferEncoding,
 ) => Promise<string>;
 
+export type AgentControlShadowAuditAppender = (params: {
+  audit: AgentControlAuditEvent;
+  request: AgentControlShadowRequest;
+}) => Promise<void> | void;
+
+export type AgentControlShadowSideEffectCounters = {
+  deliveryAttempts: number;
+  workspaceWrites: number;
+  serviceMutations: number;
+  secretReads: number;
+  cronMutations: number;
+  liveHandlerCalls: number;
+};
+
+export type AgentControlShadowRunResult = {
+  status: "shadow_allowed" | "shadow_denied";
+  executionMode: AgentControlExecutionMode;
+  request: AgentControlShadowRequest;
+  audit: AgentControlAuditEvent;
+  operation?: AgentControlOperationPlan;
+  managedFileUpdate?: ReturnType<typeof buildManagedFileUpdatePlan>;
+  deniedReason?: string;
+  sideEffectCounters: AgentControlShadowSideEffectCounters;
+};
+
 const AGENT_CONTROL_ACTIONS = [
   "list",
   "readStatus",
@@ -228,6 +259,15 @@ const AGENT_CONTROL_STATUSES = [
 const ALL_ACTIONS: ReadonlySet<AgentControlAction> = new Set(AGENT_CONTROL_ACTIONS);
 
 const MARKDOWN_FILE_PATTERN = /(^|\/)[^/]+\.md$/i;
+
+const ZERO_SHADOW_SIDE_EFFECT_COUNTERS: AgentControlShadowSideEffectCounters = {
+  deliveryAttempts: 0,
+  workspaceWrites: 0,
+  serviceMutations: 0,
+  secretReads: 0,
+  cronMutations: 0,
+  liveHandlerCalls: 0,
+};
 
 const AgentControlEndpointSchema = z
   .object({
@@ -1124,4 +1164,108 @@ export function buildAgentControlOperationPlan(params: {
     endpoint: target.endpoint,
     audit: authorization.audit,
   };
+}
+
+function shadowDeniedAudit(params: {
+  audit: AgentControlAuditEvent;
+  reason: string;
+}): AgentControlAuditEvent {
+  return {
+    ...params.audit,
+    decision: "deny",
+    reason: params.reason,
+  };
+}
+
+function auditReasonFromError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const marker = "denied: ";
+  const markerIndex = message.indexOf(marker);
+  if (markerIndex >= 0) {
+    return message.slice(markerIndex + marker.length).trim() || "shadow_validation_denied";
+  }
+  if (message.startsWith("Unknown agent control target:")) {
+    return "target_not_found";
+  }
+  return "shadow_validation_denied";
+}
+
+export async function runAgentControlShadowOperation(params: {
+  registry: AgentControlRegistry;
+  principal: AgentControlPrincipal;
+  request: AgentControlShadowRequest;
+  auditAppender: AgentControlShadowAuditAppender;
+  now?: Date;
+  auditContext?: AgentControlAuditContext;
+}): Promise<AgentControlShadowRunResult> {
+  const authorization = authorizeAgentControlAction({
+    registry: params.registry,
+    principal: params.principal,
+    targetAgentId: params.request.targetAgentId,
+    action: params.request.action,
+    now: params.now,
+    auditContext: params.auditContext,
+  });
+
+  if (!authorization.allowed) {
+    await params.auditAppender({ audit: authorization.audit, request: params.request });
+    return {
+      status: "shadow_denied",
+      executionMode: "dry_run",
+      request: params.request,
+      audit: authorization.audit,
+      deniedReason: authorization.reason,
+      sideEffectCounters: { ...ZERO_SHADOW_SIDE_EFFECT_COUNTERS },
+    };
+  }
+
+  try {
+    if (params.request.action === "requestManagedFileUpdate") {
+      const managedFileUpdate = buildManagedFileUpdatePlan({
+        registry: params.registry,
+        principal: params.principal,
+        request: params.request,
+        now: params.now,
+        auditContext: params.auditContext,
+      });
+      await params.auditAppender({ audit: managedFileUpdate.audit, request: params.request });
+      return {
+        status: "shadow_allowed",
+        executionMode: "dry_run",
+        request: params.request,
+        audit: managedFileUpdate.audit,
+        managedFileUpdate,
+        sideEffectCounters: { ...ZERO_SHADOW_SIDE_EFFECT_COUNTERS },
+      };
+    }
+
+    const operation = buildAgentControlOperationPlan({
+      registry: params.registry,
+      principal: params.principal,
+      request: params.request,
+      now: params.now,
+      auditContext: params.auditContext,
+    });
+    await params.auditAppender({ audit: operation.audit, request: params.request });
+    return {
+      status: "shadow_allowed",
+      executionMode: "dry_run",
+      request: params.request,
+      audit: operation.audit,
+      operation,
+      sideEffectCounters: { ...ZERO_SHADOW_SIDE_EFFECT_COUNTERS },
+    };
+  } catch (error) {
+    const reason = auditReasonFromError(error);
+    const audit = shadowDeniedAudit({ audit: authorization.audit, reason });
+    await params.auditAppender({ audit, request: params.request });
+    return {
+      status: "shadow_denied",
+      executionMode: "dry_run",
+      request: params.request,
+      audit,
+      deniedReason: reason,
+      sideEffectCounters: { ...ZERO_SHADOW_SIDE_EFFECT_COUNTERS },
+    };
+  }
 }
