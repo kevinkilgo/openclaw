@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   authorizeAgentControlAction,
@@ -17,6 +20,11 @@ import {
   validateAgentControlRegistryIntegrity,
   type AgentControlRegistry,
 } from "./agent-control.js";
+
+const moduleSourcePath = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "agent-control.ts",
+);
 
 const registry: AgentControlRegistry = {
   version: 1,
@@ -901,5 +909,26 @@ describe("managed agent Markdown files", () => {
       },
     });
     expect(auditEvents).toHaveLength(1);
+  });
+
+  it("keeps the shadow wrapper isolated from live mutation adapters", () => {
+    const source = fs.readFileSync(moduleSourcePath, "utf8");
+    const forbiddenLiveAdapters = [
+      "node:child_process",
+      "server-methods/agents",
+      "server-methods",
+      "agents.files.set",
+      "dockerode",
+      "Dockerode",
+      "service update",
+      "service restart",
+      "delivery_queue",
+      ["BWS", "ACCESS", "TOKEN"].join("_"),
+      "secret create",
+    ];
+
+    for (const forbidden of forbiddenLiveAdapters) {
+      expect(source).not.toContain(forbidden);
+    }
   });
 });
