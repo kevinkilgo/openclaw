@@ -239,6 +239,28 @@ export type AgentControlShadowRunResult = {
   sideEffectCounters: AgentControlShadowSideEffectCounters;
 };
 
+export type AgentControlShadowMatrixAttempt = {
+  principal: AgentControlPrincipal;
+  request: AgentControlShadowRequest;
+  auditContext?: AgentControlAuditContext;
+};
+
+export type AgentControlShadowMatrixSummary = {
+  totalAttempts: number;
+  allowed: number;
+  denied: number;
+  byAction: Record<AgentControlAction, { allowed: number; denied: number }>;
+  byReason: Record<string, number>;
+  sideEffectCounters: AgentControlShadowSideEffectCounters;
+};
+
+export type AgentControlShadowMatrixResult = {
+  status: "shadow_matrix_recorded";
+  executionMode: AgentControlExecutionMode;
+  results: AgentControlShadowRunResult[];
+  summary: AgentControlShadowMatrixSummary;
+};
+
 const AGENT_CONTROL_ACTIONS = [
   "list",
   "readStatus",
@@ -439,6 +461,29 @@ function emptyActionCounts(): Record<AgentControlAction, number> {
     AgentControlAction,
     number
   >;
+}
+
+function emptyShadowActionSummary(): Record<
+  AgentControlAction,
+  { allowed: number; denied: number }
+> {
+  return Object.fromEntries(
+    AGENT_CONTROL_ACTIONS.map((action) => [action, { allowed: 0, denied: 0 }]),
+  ) as Record<AgentControlAction, { allowed: number; denied: number }>;
+}
+
+function mergeShadowSideEffectCounters(
+  left: AgentControlShadowSideEffectCounters,
+  right: AgentControlShadowSideEffectCounters,
+): AgentControlShadowSideEffectCounters {
+  return {
+    deliveryAttempts: left.deliveryAttempts + right.deliveryAttempts,
+    workspaceWrites: left.workspaceWrites + right.workspaceWrites,
+    serviceMutations: left.serviceMutations + right.serviceMutations,
+    secretReads: left.secretReads + right.secretReads,
+    cronMutations: left.cronMutations + right.cronMutations,
+    liveHandlerCalls: left.liveHandlerCalls + right.liveHandlerCalls,
+  };
 }
 
 function normalizeRelativePath(input: string): string | undefined {
@@ -1268,4 +1313,56 @@ export async function runAgentControlShadowOperation(params: {
       sideEffectCounters: { ...ZERO_SHADOW_SIDE_EFFECT_COUNTERS },
     };
   }
+}
+
+export async function runAgentControlShadowMatrix(params: {
+  registry: AgentControlRegistry;
+  attempts: AgentControlShadowMatrixAttempt[];
+  auditAppender: AgentControlShadowAuditAppender;
+  now?: Date;
+}): Promise<AgentControlShadowMatrixResult> {
+  const results: AgentControlShadowRunResult[] = [];
+  for (const attempt of params.attempts) {
+    results.push(
+      await runAgentControlShadowOperation({
+        registry: params.registry,
+        principal: attempt.principal,
+        request: attempt.request,
+        auditAppender: params.auditAppender,
+        now: params.now,
+        auditContext: attempt.auditContext,
+      }),
+    );
+  }
+
+  const byAction = emptyShadowActionSummary();
+  const byReason: Record<string, number> = {};
+  let sideEffectCounters = { ...ZERO_SHADOW_SIDE_EFFECT_COUNTERS };
+  for (const result of results) {
+    const actionSummary = byAction[result.request.action];
+    if (result.status === "shadow_allowed") {
+      actionSummary.allowed += 1;
+    } else {
+      actionSummary.denied += 1;
+      incrementCount(byReason, result.deniedReason ?? result.audit.reason);
+    }
+    sideEffectCounters = mergeShadowSideEffectCounters(
+      sideEffectCounters,
+      result.sideEffectCounters,
+    );
+  }
+
+  return {
+    status: "shadow_matrix_recorded",
+    executionMode: "dry_run",
+    results,
+    summary: {
+      totalAttempts: results.length,
+      allowed: results.filter((result) => result.status === "shadow_allowed").length,
+      denied: results.filter((result) => result.status === "shadow_denied").length,
+      byAction,
+      byReason: sortCountRecord(byReason),
+      sideEffectCounters,
+    },
+  };
 }
