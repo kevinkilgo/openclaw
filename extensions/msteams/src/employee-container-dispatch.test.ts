@@ -109,6 +109,12 @@ function createConfig(): OpenClawConfig {
   } as OpenClawConfig;
 }
 
+function createDefaultWaitConfig(): OpenClawConfig {
+  const cfg = createConfig();
+  delete cfg.channels?.msteams?.employeeContainerDispatch?.waitTimeoutMs;
+  return cfg;
+}
+
 describe("msteams employee container dispatch", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -196,6 +202,86 @@ describe("msteams employee container dispatch", () => {
       expect.objectContaining({ kind: "final", stage: "final" }),
     );
     expect(replyDispatcherMockState.settle).toHaveBeenCalledTimes(1);
+  });
+
+  it("defaults Teams employee dispatch waits to the simple-turn SLA", async () => {
+    const cfg = createDefaultWaitConfig();
+    const runtime = { error: vi.fn() } as unknown as RuntimeEnv;
+    const deps = createMSTeamsMessageHandlerDeps({ cfg, runtime });
+    const handler = createMSTeamsMessageHandler(deps);
+
+    await handler(createContext());
+
+    expect(gatewayRuntimeMockState.callGatewayFromCli).toHaveBeenNthCalledWith(
+      1,
+      "agent",
+      {
+        url: "ws://employee-agent-kkilgo:18789",
+        token: "test-token",
+        timeout: "60000",
+      },
+      expect.objectContaining({
+        timeout: 60,
+      }),
+      { clientName: "gateway-client", mode: "backend", scopes: ["operator.write"] },
+    );
+    expect(gatewayRuntimeMockState.callGatewayFromCli).toHaveBeenNthCalledWith(
+      2,
+      "agent.wait",
+      {
+        url: "ws://employee-agent-kkilgo:18789",
+        token: "test-token",
+        timeout: "70000",
+      },
+      { runId: "run-1", timeoutMs: 60000 },
+      { clientName: "gateway-client", mode: "backend", scopes: ["operator.write"] },
+    );
+    expect(deps.log.info).toHaveBeenCalledWith(
+      "msteams employee comms e2e trace",
+      expect.objectContaining({
+        routeAgentId: "kkilgo",
+        employeeRunId: "run-1",
+        finalStatus: "completed",
+      }),
+    );
+  });
+
+  it("classifies slow optional connector startup as a bounded employee comms timeout", async () => {
+    gatewayRuntimeMockState.callGatewayFromCli.mockReset();
+    gatewayRuntimeMockState.callGatewayFromCli
+      .mockResolvedValueOnce({ runId: "run-slow-connectors" })
+      .mockResolvedValueOnce({
+        status: "timeout",
+        error: "MCP connector server startup timed out",
+      });
+    const cfg = createDefaultWaitConfig();
+    const runtime = { error: vi.fn() } as unknown as RuntimeEnv;
+    const deps = createMSTeamsMessageHandlerDeps({ cfg, runtime });
+    const handler = createMSTeamsMessageHandler(deps);
+
+    await expect(handler(createContext())).rejects.toThrow(
+      "employee comms connector/tool startup timeout after 60000ms",
+    );
+
+    expect(gatewayRuntimeMockState.callGatewayFromCli).toHaveBeenNthCalledWith(
+      2,
+      "agent.wait",
+      expect.objectContaining({ timeout: "70000" }),
+      { runId: "run-slow-connectors", timeoutMs: 60000 },
+      { clientName: "gateway-client", mode: "backend", scopes: ["operator.write"] },
+    );
+    expect(deps.log.info).toHaveBeenCalledWith(
+      "msteams employee comms e2e trace",
+      expect.objectContaining({
+        routeAgentId: "kkilgo",
+        employeeRunId: "run-slow-connectors",
+        finalStatus: "failed",
+        failureClassification: "connector-tool-startup-timeout",
+      }),
+    );
+    expect(runtime.error).toHaveBeenCalledWith(
+      expect.stringContaining("connector/tool startup timeout after 60000ms"),
+    );
   });
 
   it("starts Codex device-code login when the employee container lacks OpenAI auth", async () => {

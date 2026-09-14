@@ -59,6 +59,7 @@ type GatewayAgentWaitResult = {
 
 const EMPLOYEE_CONTAINER_SESSION_CLAIM_RETRY_ATTEMPTS = 3;
 const EMPLOYEE_CONTAINER_SESSION_CLAIM_RETRY_DELAY_MS = 1_000;
+const EMPLOYEE_CONTAINER_DEFAULT_WAIT_TIMEOUT_MS = 60_000;
 const activeEmployeeContainerProviderLoginFlows = createProviderLoginFlowRegistry();
 function employeeContainerGatewayClientOptions() {
   return {
@@ -244,6 +245,75 @@ function isProviderLoginFlowExpired(error: unknown): boolean {
   );
 }
 
+type MSTeamsEmployeeCommsFailureClassification =
+  | "inbound-not-captured"
+  | "route-not-resolved"
+  | "employee-dispatch-rejected"
+  | "employee-run-timed-out"
+  | "model-auth-failure"
+  | "connector-tool-startup-timeout"
+  | "outbound-send-failed"
+  | "recipient-visible-proof-missing"
+  | "unknown";
+
+type MSTeamsEmployeeCommsTrace = {
+  routeAgentId: string;
+  teamsConversationId?: string;
+  teamsMessageId?: string;
+  employeeRunId?: string;
+  dispatchAcceptedAtMs?: number;
+  employeeCompletedAtMs?: number;
+  outboundAttemptAtMs?: number;
+  finalStatus?: "completed" | "failed";
+  totalLatencyMs?: number;
+  failureClassification?: MSTeamsEmployeeCommsFailureClassification;
+};
+
+function nowMs(): number {
+  return Date.now();
+}
+
+function classifyEmployeeCommsFailure(error: unknown): MSTeamsEmployeeCommsFailureClassification {
+  const text = formatUnknownError(error);
+  if (/Missing bearer|401 Unauthorized|OpenAI auth/i.test(text)) {
+    return "model-auth-failure";
+  }
+  if (/timed out|timeout|deadline/i.test(text)) {
+    if (/MCP|connector|tool|server startup|startup/i.test(text)) {
+      return "connector-tool-startup-timeout";
+    }
+    return "employee-run-timed-out";
+  }
+  if (/Gateway not reachable|ENOTFOUND|abnormal closure|gateway closed|ECONNREFUSED/i.test(text)) {
+    return "employee-dispatch-rejected";
+  }
+  if (/send|delivery|recipient/i.test(text)) {
+    return "outbound-send-failed";
+  }
+  return "unknown";
+}
+
+function logEmployeeCommsTrace(params: {
+  log: MSTeamsMessageHandlerDeps["log"];
+  trace: MSTeamsEmployeeCommsTrace;
+}): void {
+  params.log.info("msteams employee comms e2e trace", params.trace);
+}
+
+function createEmployeeCommsTimeoutError(params: {
+  routeAgentId: string;
+  waitTimeoutMs: number;
+  runId: string;
+  detail?: string;
+}): Error {
+  const detail = params.detail?.trim();
+  return new Error(
+    `employee comms connector/tool startup timeout after ${params.waitTimeoutMs}ms routeAgentId=${
+      params.routeAgentId
+    } runId=${params.runId}${detail ? `: ${detail}` : ""}`,
+  );
+}
+
 export async function startEmployeeCodexDeviceLogin(params: {
   cfg: OpenClawConfig;
   runtime: RuntimeEnv;
@@ -414,11 +484,19 @@ async function dispatchViaEmployeeContainer(params: {
   );
   const url = resolveEmployeeGatewayUrl(dispatchCfg, params.routeAgentId);
   const token = await readEmployeeGatewayToken(dispatchCfg, params.routeAgentId);
-  const waitTimeoutMs = Math.max(1, Math.floor(dispatchCfg.waitTimeoutMs ?? 180_000));
+  const waitTimeoutMs = Math.max(
+    1,
+    Math.floor(dispatchCfg.waitTimeoutMs ?? EMPLOYEE_CONTAINER_DEFAULT_WAIT_TIMEOUT_MS),
+  );
   const idempotencyKey = `msteams-employee-container:${params.routeAgentId}:${
     params.messageId ?? sessionKey
   }`;
   let waitResult: GatewayAgentWaitResult | undefined;
+  const trace: MSTeamsEmployeeCommsTrace = {
+    routeAgentId: params.routeAgentId,
+    teamsMessageId: params.messageId,
+  };
+  const startedAtMs = nowMs();
   for (let attempt = 1; attempt <= EMPLOYEE_CONTAINER_SESSION_CLAIM_RETRY_ATTEMPTS; attempt += 1) {
     params.log.info("dispatching msteams turn to employee container", {
       routeAgentId: params.routeAgentId,
@@ -445,6 +523,8 @@ async function dispatchViaEmployeeContainer(params: {
       if (!accepted.runId) {
         throw new Error("employee container agent run did not return a runId");
       }
+      trace.employeeRunId = accepted.runId;
+      trace.dispatchAcceptedAtMs = nowMs();
       // SAFETY: agent.wait responses are narrowed by status/error/terminalReply checks before data is delivered.
       waitResult = (await callGatewayFromCli(
         "agent.wait",
@@ -453,9 +533,18 @@ async function dispatchViaEmployeeContainer(params: {
         employeeContainerGatewayClientOptions(),
       )) as GatewayAgentWaitResult; // SAFETY: agent.wait responses are narrowed by status/error/terminalReply checks before data is delivered.
       if (waitResult.status === "ok") {
+        trace.employeeCompletedAtMs = nowMs();
         break;
       }
       const errorDetail = waitResult.error?.trim();
+      if (waitResult.status === "timeout") {
+        throw createEmployeeCommsTimeoutError({
+          routeAgentId: params.routeAgentId,
+          waitTimeoutMs,
+          runId: accepted.runId,
+          detail: errorDetail,
+        });
+      }
       throw new Error(
         `employee container agent run ended with status ${waitResult.status ?? "unknown"}${
           errorDetail ? `: ${errorDetail}` : ""
@@ -480,17 +569,30 @@ async function dispatchViaEmployeeContainer(params: {
         await sleep(EMPLOYEE_CONTAINER_SESSION_CLAIM_RETRY_DELAY_MS * attempt);
         continue;
       }
+      trace.finalStatus = "failed";
+      trace.totalLatencyMs = nowMs() - startedAtMs;
+      trace.failureClassification = classifyEmployeeCommsFailure(err);
+      logEmployeeCommsTrace({ log: params.log, trace });
       throw err;
     }
   }
   if (!waitResult || waitResult.status !== "ok") {
-    throw new Error("employee container agent run did not complete");
+    const err = new Error("employee container agent run did not complete");
+    trace.finalStatus = "failed";
+    trace.totalLatencyMs = nowMs() - startedAtMs;
+    trace.failureClassification = classifyEmployeeCommsFailure(err);
+    logEmployeeCommsTrace({ log: params.log, trace });
+    throw err;
   }
   const text = waitResult.terminalReply?.text?.trim();
   if (!text) {
+    trace.finalStatus = "completed";
+    trace.totalLatencyMs = nowMs() - startedAtMs;
+    logEmployeeCommsTrace({ log: params.log, trace });
     return { kind: "completed", finalResponses: 0 };
   }
   const payload: ReplyPayload = { text };
+  trace.outboundAttemptAtMs = nowMs();
   // SAFETY: The delivery implementation treats this metadata as opaque reply lifecycle tags.
   const result = await params.delivery.deliver(payload, {
     kind: "final",
@@ -498,6 +600,9 @@ async function dispatchViaEmployeeContainer(params: {
   } as never); // SAFETY: The delivery implementation treats this metadata as opaque reply lifecycle tags.
   await params.settleDelivery?.();
   await result?.finalization;
+  trace.finalStatus = "completed";
+  trace.totalLatencyMs = nowMs() - startedAtMs;
+  logEmployeeCommsTrace({ log: params.log, trace });
   return { kind: "completed", finalResponses: 1 };
 }
 
