@@ -10,11 +10,10 @@ import {
 } from "openclaw/plugin-sdk/channel-inbound";
 import { bindIngressLifecycleToReplyOptions } from "openclaw/plugin-sdk/channel-outbound";
 import { callGatewayFromCli } from "openclaw/plugin-sdk/gateway-runtime";
+import { setAuthProfileOrder } from "openclaw/plugin-sdk/provider-auth";
 import { runProviderChannelLoginFlow } from "openclaw/plugin-sdk/provider-auth-login-flow-runtime";
 import { createChannelHistoryWindow, type HistoryEntry } from "openclaw/plugin-sdk/reply-history";
 import { sliceUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
-import { setAuthProfileOrder } from "../../../../src/agents/auth-profiles.js";
-import type { OperatorScope } from "../../../../src/gateway/operator-scopes.js";
 import type { OpenClawConfig, ReplyPayload, RuntimeEnv } from "../../runtime-api.js";
 import { formatUnknownError } from "../errors.js";
 import type { MSTeamsMessageHandlerDeps } from "../monitor-handler.types.js";
@@ -65,7 +64,7 @@ function employeeContainerGatewayClientOptions() {
   return {
     clientName: "gateway-client" as const,
     mode: "backend" as const,
-    scopes: ["operator.write"] satisfies OperatorScope[],
+    scopes: ["operator.write" as const],
   };
 }
 

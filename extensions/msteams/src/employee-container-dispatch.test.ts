@@ -41,7 +41,8 @@ vi.mock("openclaw/plugin-sdk/provider-auth-login-flow-runtime", () => ({
   runProviderChannelLoginFlow: loginRuntimeMockState.runDeviceLoginFlow,
 }));
 
-vi.mock("../../../src/agents/auth-profiles.js", () => ({
+vi.mock("openclaw/plugin-sdk/provider-auth", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("openclaw/plugin-sdk/provider-auth")>()),
   setAuthProfileOrder: authProfilesMockState.setAuthProfileOrder,
 }));
 
