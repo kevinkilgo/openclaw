@@ -126,10 +126,7 @@ export const DEFAULT_MSTEAMS_EMPLOYEE_ONBOARDING_FAILURE_ACK =
 function getMSTeamsEmployeeSelfServiceConfig(
   cfg: OpenClawConfig,
 ): SelfServiceOnboardingConfig | undefined {
-  const msteamsConfig = cfg.channels?.msteams as
-    | ({ employeeSelfServiceOnboarding?: SelfServiceOnboardingConfig } & Record<string, unknown>)
-    | undefined;
-  return msteamsConfig?.employeeSelfServiceOnboarding;
+  return cfg.channels?.msteams?.employeeSelfServiceOnboarding;
 }
 
 export function isMSTeamsEmployeeSelfServiceOnboardingEnabled(cfg: OpenClawConfig): boolean {

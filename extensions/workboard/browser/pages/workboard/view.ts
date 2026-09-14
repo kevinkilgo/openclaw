@@ -244,7 +244,7 @@ export function renderWorkboard(props: WorkboardProps & { onRefresh: () => void 
               placeholder=${t("workboard.searchPlaceholder")}
               .value=${state.query}
               @input=${(event: InputEvent) => {
-                state.query = (event.currentTarget as HTMLInputElement).value;
+                state.query = (event.currentTarget as HTMLInputElement).value; // SAFETY: This input handler is attached directly to the search input.
                 props.onRequestUpdate?.();
               }}
             />

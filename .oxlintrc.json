@@ -395,6 +395,24 @@
       }
     },
     {
+      "files": [
+        "src/agents/control/agent-control.ts",
+        "src/commands/doctor-config-preflight.ts"
+      ],
+      "rules": {
+        "max-lines": ["error", { "max": 1900, "skipBlankLines": true, "skipComments": true }]
+      }
+    },
+    {
+      "files": [
+        "src/agents/control/agent-control.test.ts",
+        "src/commands/doctor-config-preflight.state-migration.test.ts"
+      ],
+      "rules": {
+        "max-lines": ["error", { "max": 1400, "skipBlankLines": true, "skipComments": true }]
+      }
+    },
+    {
       "files": ["**/*.{ts,tsx,mts,cts}"],
       "rules": {
         // tsgo owns TypeScript type/value namespace validity; no-var still rejects var declarations.

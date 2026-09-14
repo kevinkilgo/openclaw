@@ -707,7 +707,8 @@ function scaffoldPathActions(params: {
       key,
       params.existing?.scaffoldPathExists?.[key] ? "reuse-existing" : "create",
     ]),
-  ) as MSTeamsEmployeeOnboardingExecutionReadinessProof["idempotency"]["scaffold"];
+    // SAFETY: pathKeys enumerates every scaffold key and maps each to one of the scaffold idempotency states.
+  ) as MSTeamsEmployeeOnboardingExecutionReadinessProof["idempotency"]["scaffold"]; // SAFETY: pathKeys enumerates every scaffold key and maps each to one of the scaffold idempotency states.
 }
 
 export function createMSTeamsEmployeeOnboardingExecutionReadinessProof(params: {
@@ -989,7 +990,8 @@ export async function createMSTeamsEmployeeOnboardingAdminTransition(params: {
     mode: "operator-admin",
     status: result.status,
     requestId: params.requestId,
-    requestStatus: result.request.status as MSTeamsEmployeeOnboardingTerminalStatus,
+    // SAFETY: Dry-run terminal results only expose terminal onboarding request statuses.
+    requestStatus: result.request.status as MSTeamsEmployeeOnboardingTerminalStatus, // SAFETY: Dry-run terminal results only expose terminal onboarding request statuses.
     transitionEvidence,
     sideEffects: result.sideEffects,
   };
@@ -1025,7 +1027,8 @@ export async function createMSTeamsEmployeeOnboardingAdminDryRun(params: {
   });
   const redactedPlan = redactMSTeamsEmployeeOnboardingProvisioningDryRun(
     plan,
-  ) as RedactedMSTeamsEmployeeOnboardingProvisioningPlan;
+    // SAFETY: The redactor preserves the provisioning-plan structure while removing sensitive command/path detail.
+  ) as RedactedMSTeamsEmployeeOnboardingProvisioningPlan; // SAFETY: The redactor preserves the provisioning-plan structure while removing sensitive command/path detail.
   const redactedProof = redactMSTeamsEmployeeOnboardingExecutionReadinessProof(proof);
   if (proof.status === "blocked") {
     return {

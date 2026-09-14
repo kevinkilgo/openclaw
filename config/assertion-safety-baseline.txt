@@ -805,7 +805,6 @@ extensions/msteams/src/media-helpers.ts	1
 extensions/msteams/src/messenger.ts	1
 extensions/msteams/src/monitor-handler.ts	5
 extensions/msteams/src/monitor-handler/inbound-content.ts	1
-extensions/msteams/src/monitor-handler/inbound-dispatch.ts	1
 extensions/msteams/src/monitor-handler/inbound-facts.ts	1
 extensions/msteams/src/monitor.ts	8
 extensions/msteams/src/msteams-ingress.ts	1
@@ -1340,10 +1339,6 @@ extensions/whatsapp/src/targets-runtime.ts	2
 extensions/workboard/browser/lib/workboard/metadata-contract-normalization.ts	1
 extensions/workboard/browser/lib/workboard/normalization.ts	5
 extensions/workboard/browser/pages/workboard/view-card-actions.ts	2
-extensions/workboard/browser/pages/workboard/view-card-details.ts	1
-extensions/workboard/browser/pages/workboard/view-card-modal.ts	1
-extensions/workboard/browser/pages/workboard/view-card.ts	1
-extensions/workboard/browser/pages/workboard/view.ts	1
 extensions/workboard/browser/pages/workboard/workboard-select.ts	1
 extensions/workboard/doctor-contract-api.ts	4
 extensions/workboard/src/cli.ts	2

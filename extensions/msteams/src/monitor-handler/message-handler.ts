@@ -86,14 +86,10 @@ export function createMSTeamsMessageHandler(deps: MSTeamsMessageHandlerDeps) {
     if (!params.isDirectMessage) {
       return undefined;
     }
-    const selfServiceOnboardingConfig = msteamsCfg as
-      | { employeeSelfServiceOnboarding?: { postProvisionAuthPromptWaitMs?: number } }
-      | undefined;
     const waitMs = Math.max(
       0,
       Math.floor(
-        selfServiceOnboardingConfig?.employeeSelfServiceOnboarding?.postProvisionAuthPromptWaitMs ??
-          30_000,
+        msteamsCfg?.employeeSelfServiceOnboarding?.postProvisionAuthPromptWaitMs ?? 30_000,
       ),
     );
     if (waitMs <= 0) {

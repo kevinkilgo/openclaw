@@ -322,7 +322,7 @@ function renderCard(props: WorkboardProps, card: WorkboardCard, surface: Workboa
         }
         state.draggedCardId = card.id;
         event.dataTransfer?.setData("text/plain", card.id);
-        event.dataTransfer?.setDragImage(event.currentTarget as Element, 16, 16);
+        event.dataTransfer?.setDragImage(event.currentTarget as Element, 16, 16); // SAFETY: This drag handler is attached to the card element being dragged.
         props.onRequestUpdate?.();
       }}
       @dragend=${() => {

@@ -4708,4 +4708,3 @@ describe("workboard controller", () => {
     expect(state.cards).toEqual([linked]);
   });
 });
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

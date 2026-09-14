@@ -602,7 +602,7 @@ const AgentControlRegistrySnapshotArtifactSchema = z
 
     const expectedAgentIds = normalizeAgentControlRegistry(snapshot.plan.registry)
       .agents.map((agent) => agent.id)
-      .sort((left, right) => left.localeCompare(right));
+      .toSorted((left, right) => left.localeCompare(right));
     if (snapshot.plan.sourceCount !== snapshot.plan.registry.agents.length) {
       ctx.addIssue({
         code: "custom",
@@ -634,7 +634,7 @@ function formatRegistryParseIssues(issues: readonly z.core.$ZodIssue[]): string[
 }
 
 function sortStrings(values: readonly string[]): string[] {
-  return [...values].sort((left, right) => left.localeCompare(right));
+  return values.toSorted((left, right) => left.localeCompare(right));
 }
 
 function incrementCount<T extends string>(counts: Record<T, number>, key: T): void {
@@ -642,32 +642,36 @@ function incrementCount<T extends string>(counts: Record<T, number>, key: T): vo
 }
 
 function sortCountRecord<T extends string>(counts: Record<T, number>): Record<T, number> {
+  // SAFETY: Sorting Object.entries preserves the same string key domain and numeric count values from the input record.
   return Object.fromEntries(
-    Object.entries(counts).sort(([left], [right]) => left.localeCompare(right)),
-  ) as Record<T, number>;
+    Object.entries(counts).toSorted(([left], [right]) => left.localeCompare(right)),
+  ) as Record<T, number>; // SAFETY: Sorting Object.entries preserves the same string key domain and numeric count values from the input record.
 }
 
 function emptyStatusCounts(): Record<AgentControlStatus, number> {
+  // SAFETY: AGENT_CONTROL_STATUSES enumerates every status key with numeric zero values.
   return Object.fromEntries(AGENT_CONTROL_STATUSES.map((status) => [status, 0])) as Record<
     AgentControlStatus,
     number
-  >;
+  >; // SAFETY: AGENT_CONTROL_STATUSES enumerates every status key with numeric zero values.
 }
 
 function emptyActionCounts(): Record<AgentControlAction, number> {
+  // SAFETY: AGENT_CONTROL_ACTIONS enumerates every action key with numeric zero values.
   return Object.fromEntries(AGENT_CONTROL_ACTIONS.map((action) => [action, 0])) as Record<
     AgentControlAction,
     number
-  >;
+  >; // SAFETY: AGENT_CONTROL_ACTIONS enumerates every action key with numeric zero values.
 }
 
 function emptyShadowActionSummary(): Record<
   AgentControlAction,
   { allowed: number; denied: number }
 > {
+  // SAFETY: AGENT_CONTROL_ACTIONS enumerates every action key with the expected summary value shape.
   return Object.fromEntries(
     AGENT_CONTROL_ACTIONS.map((action) => [action, { allowed: 0, denied: 0 }]),
-  ) as Record<AgentControlAction, { allowed: number; denied: number }>;
+  ) as Record<AgentControlAction, { allowed: number; denied: number }>; // SAFETY: AGENT_CONTROL_ACTIONS enumerates every action key with the expected summary value shape.
 }
 
 function emptyCommunicationPathStatusCounts(): Record<AgentControlCommunicationPathStatus, number> {
@@ -808,7 +812,7 @@ function assertApp03RegistrySource(registry: AgentControlInternalRouteRegistrySo
   if (registry.source !== "private-artifact") {
     throw new Error("APP-03 route contract requires registry.source=private-artifact");
   }
-  if (registry.failClosed !== true) {
+  if (!registry.failClosed) {
     throw new Error("APP-03 route contract requires registry.failClosed=true");
   }
   if (!normalizePrivateArtifactPath(registry.path)) {
@@ -819,7 +823,7 @@ function assertApp03RegistrySource(registry: AgentControlInternalRouteRegistrySo
 }
 
 function assertApp03AuditSink(audit: AgentControlInternalRouteAuditSink): void {
-  if (audit.failClosed !== true) {
+  if (!audit.failClosed) {
     throw new Error("APP-03 route contract requires audit.failClosed=true");
   }
   if (!normalizePrivateArtifactPath(audit.sink)) {
@@ -1193,7 +1197,7 @@ export function buildAgentControlRegistrySnapshot(params: {
         },
       } satisfies AgentControlRecord;
     })
-    .sort((left, right) => left.id.localeCompare(right.id));
+    .toSorted((left, right) => left.id.localeCompare(right.id));
 
   const registry: AgentControlRegistry = {
     version: 1,

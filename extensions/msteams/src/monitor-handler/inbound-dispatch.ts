@@ -40,12 +40,6 @@ type MSTeamsEmployeeContainerDispatchConfig = {
   waitTimeoutMs?: number;
 };
 
-type MSTeamsConfigWithEmployeeContainerDispatch = NonNullable<
-  OpenClawConfig["channels"]
->["msteams"] & {
-  employeeContainerDispatch?: MSTeamsEmployeeContainerDispatchConfig;
-};
-
 type GatewayAgentAccepted = {
   runId?: string;
 };
@@ -103,8 +97,7 @@ type EmployeeContainerOpenClawConfig = OpenClawConfig & {
 function readEmployeeContainerDispatchConfig(
   cfg: OpenClawConfig,
 ): MSTeamsEmployeeContainerDispatchConfig | undefined {
-  return (cfg.channels?.msteams as MSTeamsConfigWithEmployeeContainerDispatch | undefined)
-    ?.employeeContainerDispatch;
+  return cfg.channels?.msteams?.employeeContainerDispatch;
 }
 
 function fillEmployeeTemplate(template: string, agentId: string): string {
@@ -137,9 +130,10 @@ async function readEmployeeContainerConfig(
   dispatchCfg: MSTeamsEmployeeContainerDispatchConfig,
   agentId: string,
 ): Promise<EmployeeContainerOpenClawConfig> {
+  // SAFETY: Employee container config is parsed from OpenClaw-owned JSON and callers validate required fields before use.
   return JSON.parse(
     await readFile(resolveEmployeeConfigPath(dispatchCfg, agentId), "utf8"),
-  ) as EmployeeContainerOpenClawConfig;
+  ) as EmployeeContainerOpenClawConfig; // SAFETY: Employee container config is parsed from OpenClaw-owned JSON and callers validate required fields before use.
 }
 
 async function readEmployeeGatewayToken(
@@ -171,7 +165,8 @@ function prepareEmployeeCodexLoginConfig(params: {
   hostRoot: string;
   employeeAgentId: string;
 }): EmployeeContainerOpenClawConfig {
-  const cloned = JSON.parse(JSON.stringify(params.cfg)) as EmployeeContainerOpenClawConfig;
+  // SAFETY: JSON round-trip deep-clones the OpenClaw config shape before rewriting known agent workspace fields.
+  const cloned = JSON.parse(JSON.stringify(params.cfg)) as EmployeeContainerOpenClawConfig; // SAFETY: JSON round-trip deep-clones the OpenClaw config shape before rewriting known agent workspace fields.
   cloned.agents = cloned.agents ?? {};
   cloned.agents.defaults = {
     ...cloned.agents.defaults,
@@ -252,10 +247,11 @@ export async function startEmployeeCodexDeviceLogin(params: {
     if (params.sendText) {
       await params.sendText(trimmed);
     } else if (params.delivery) {
+      // SAFETY: The delivery implementation treats this metadata as opaque reply lifecycle tags.
       const delivered = await params.delivery.deliver({ text: trimmed }, {
         kind: "final",
         stage: "final",
-      } as never);
+      } as never); // SAFETY: The delivery implementation treats this metadata as opaque reply lifecycle tags.
       // Device-code prompts are produced before the login flow completes, so
       // flush the queued Teams reply now instead of waiting for the final login
       // completion path to settle the dispatcher.
@@ -356,6 +352,7 @@ async function dispatchViaEmployeeContainer(params: {
       attempt,
     });
     try {
+      // SAFETY: Agent gateway responses are checked for runId immediately before the run id is used.
       const accepted = (await callGatewayFromCli(
         "agent",
         { url, token, timeout: String(waitTimeoutMs) },
@@ -369,16 +366,17 @@ async function dispatchViaEmployeeContainer(params: {
           sourceReplyDeliveryMode: "automatic",
         },
         employeeContainerGatewayClientOptions(),
-      )) as GatewayAgentAccepted;
+      )) as GatewayAgentAccepted; // SAFETY: Agent gateway responses are checked for runId immediately before the run id is used.
       if (!accepted.runId) {
         throw new Error("employee container agent run did not return a runId");
       }
+      // SAFETY: agent.wait responses are narrowed by status/error/terminalReply checks before data is delivered.
       waitResult = (await callGatewayFromCli(
         "agent.wait",
         { url, token, timeout: String(waitTimeoutMs + 10_000) },
         { runId: accepted.runId, timeoutMs: waitTimeoutMs },
         employeeContainerGatewayClientOptions(),
-      )) as GatewayAgentWaitResult;
+      )) as GatewayAgentWaitResult; // SAFETY: agent.wait responses are narrowed by status/error/terminalReply checks before data is delivered.
       if (waitResult.status === "ok") {
         break;
       }
@@ -418,10 +416,11 @@ async function dispatchViaEmployeeContainer(params: {
     return { kind: "completed", finalResponses: 0 };
   }
   const payload: ReplyPayload = { text };
+  // SAFETY: The delivery implementation treats this metadata as opaque reply lifecycle tags.
   const result = await params.delivery.deliver(payload, {
     kind: "final",
     stage: "final",
-  } as never);
+  } as never); // SAFETY: The delivery implementation treats this metadata as opaque reply lifecycle tags.
   await params.settleDelivery?.();
   await result?.finalization;
   return { kind: "completed", finalResponses: 1 };
@@ -701,9 +700,10 @@ export async function dispatchMSTeamsInboundTurn(params: {
     sharePointSiteId: cfg.channels?.msteams?.sharePointSiteId,
   });
 
+  // SAFETY: Bot Framework clientInfo entities expose optional timezone; malformed values fall back to stored conversation timezone.
   const activityClientInfo = activity.entities?.find((entity) => entity.type === "clientInfo") as
     | { timezone?: string }
-    | undefined;
+    | undefined; // SAFETY: Bot Framework clientInfo entities expose optional timezone; malformed values fall back to stored conversation timezone.
   const senderTimezone = activityClientInfo?.timezone || conversationRef.timezone;
   const turnConfig =
     senderTimezone && !cfg.agents?.defaults?.userTimezone

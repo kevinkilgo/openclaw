@@ -123,7 +123,7 @@ describe("Microsoft Teams durable ingress", () => {
           accountId: "app-id",
           queueName: "msteams",
           payload: {
-            version: 1,
+            version: 1 as const,
             receivedAt: 1_000,
             rawActivity: JSON.stringify(activity({ id: "stale-activity" })),
           },
@@ -143,7 +143,7 @@ describe("Microsoft Teams durable ingress", () => {
           accountId: "app-id",
           queueName: "msteams",
           payload: {
-            version: 1,
+            version: 1 as const,
             receivedAt: 1_000,
             rawActivity: JSON.stringify(activity({ id: "fresh-activity" })),
           },

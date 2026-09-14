@@ -57,3 +57,60 @@ describe("MSTeamsConfigSchema block streaming", () => {
     },
   );
 });
+
+describe("MSTeamsConfigSchema employee onboarding runtime config", () => {
+  const baseConfig = {
+    enabled: true,
+    dmPolicy: "open" as const,
+    allowFrom: ["*"],
+  };
+
+  it("accepts employee self-service onboarding config", () => {
+    const result = MSTeamsConfigSchema.safeParse({
+      ...baseConfig,
+      employeeSelfServiceOnboarding: {
+        enabled: true,
+        acknowledgementText: "Onboarding request recorded.",
+        failureAcknowledgementText: "Onboarding request could not be recorded.",
+        postProvisionAuthPromptWaitMs: 0,
+      },
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.employeeSelfServiceOnboarding?.enabled).toBe(true);
+      expect(result.data.employeeSelfServiceOnboarding?.postProvisionAuthPromptWaitMs).toBe(0);
+    }
+  });
+
+  it("accepts employee container dispatch config", () => {
+    const result = MSTeamsConfigSchema.safeParse({
+      ...baseConfig,
+      employeeContainerDispatch: {
+        enabled: true,
+        gatewayUrlTemplate: "ws://employee-agent-{agentId}:18789",
+        tokenConfigPathTemplate: "/srv/openclaw/data/employee-agents/{agentId}/config.json",
+        agentId: "main",
+        waitTimeoutMs: 180_000,
+      },
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.employeeContainerDispatch?.enabled).toBe(true);
+      expect(result.data.employeeContainerDispatch?.agentId).toBe("main");
+    }
+  });
+
+  it("rejects unknown employee onboarding keys", () => {
+    const result = MSTeamsConfigSchema.safeParse({
+      ...baseConfig,
+      employeeSelfServiceOnboarding: {
+        enabled: true,
+        unexpected: true,
+      },
+    });
+
+    expect(result.success).toBe(false);
+  });
+});

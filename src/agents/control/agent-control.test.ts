@@ -24,6 +24,7 @@ import {
   validateAgentControlRegistryIntegrity,
   type AgentControlInternalRouteConfig,
   type AgentControlRegistry,
+  type AgentControlRegistrySnapshotDefaults,
 } from "./agent-control.js";
 
 const moduleSourcePath = path.join(
@@ -710,7 +711,7 @@ describe("APP-03 internal route readiness contract", () => {
 });
 
 describe("agent control registry snapshots", () => {
-  const defaults = {
+  const defaults: AgentControlRegistrySnapshotDefaults = {
     ownerTeam: "employee-agents",
     role: "employee-agent",
     status: "ready" as const,
@@ -721,7 +722,7 @@ describe("agent control registry snapshots", () => {
     capabilities: ["teams"],
     management: {
       managerTeams: ["artemis-leadership", "fiona-leadership"],
-      actions: ["list", "readStatus", "sendMessage", "readManagedFile"] as const,
+      actions: ["list", "readStatus", "sendMessage", "readManagedFile"],
     },
   };
 
