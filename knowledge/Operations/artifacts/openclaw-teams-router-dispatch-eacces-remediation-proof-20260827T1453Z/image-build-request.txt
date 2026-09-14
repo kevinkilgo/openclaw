@@ -1,0 +1,6 @@
+tag=local/openclaw-gateway:2026.8.1-router-safe-dispatch-state-20260827
+commit=4994f7bacf308269a0770b4a912c44a746cccec7
+timestamp=20260827T145350Z
+extensions=codex,memory-core,msteams,openai
+build_context=/home/oc_admin/.openclaw/workspace/source/openclaw
+dockerfile=/home/oc_admin/.openclaw/workspace/source/openclaw/Dockerfile

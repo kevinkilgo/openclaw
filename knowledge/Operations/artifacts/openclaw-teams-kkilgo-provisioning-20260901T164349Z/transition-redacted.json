@@ -1,0 +1,17 @@
+{
+  "requestId": "msteams-employee-onboarding-5d160d6fa7ae92a11c8a4f78",
+  "status": "provisioned",
+  "transitionedAt": "2026-09-01T16:48:48.274Z",
+  "peerHash": "5d160d6fa7ae92a11c8a4f78",
+  "transitionEvidence": {
+    "operator": "employee-onboarding-admin",
+    "requestId": "msteams-employee-onboarding-5d160d6fa7ae92a11c8a4f78",
+    "peerHash": "5d160d6fa7ae92a11c8a4f78",
+    "runnerImage": "local/openclaw-gateway:2026.8.1-kkilgo-runtime-compat-health-restore-20260901",
+    "agentIdHash": "9876daa0ba8748e76e15647e",
+    "stackNameHash": "2c43bdcac71cbf9d78ca770d",
+    "routeProofHash": "ae25dcd5283d3b227803e979",
+    "serviceProofHash": "507867a156ebf69525bffa1a",
+    "rollbackProofHash": "4d631ce31ff76a28053eadcf"
+  }
+}
