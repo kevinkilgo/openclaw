@@ -5,6 +5,7 @@ import {
   createMSTeamsMessageHandlerDeps,
   installMSTeamsTestRuntime,
 } from "./monitor-handler.test-helpers.js";
+import { startEmployeeCodexDeviceLogin } from "./monitor-handler/inbound-dispatch.js";
 import { createMSTeamsMessageHandler } from "./monitor-handler/message-handler.js";
 import type { MSTeamsTurnContext } from "./sdk-types.js";
 
@@ -37,7 +38,10 @@ vi.mock("openclaw/plugin-sdk/gateway-runtime", () => ({
   callGatewayFromCli: gatewayRuntimeMockState.callGatewayFromCli,
 }));
 
-vi.mock("openclaw/plugin-sdk/provider-auth-login-flow-runtime", () => ({
+vi.mock("openclaw/plugin-sdk/provider-auth-login-flow-runtime", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("openclaw/plugin-sdk/provider-auth-login-flow-runtime")
+  >()),
   runProviderChannelLoginFlow: loginRuntimeMockState.runDeviceLoginFlow,
 }));
 
@@ -341,5 +345,100 @@ describe("msteams employee container dispatch", () => {
     expect(runtime.error).toHaveBeenCalledWith(
       expect.stringContaining("employeeSessionKey=agent:main:msteams:direct:user-aad"),
     );
+  });
+
+  it("expires an active employee OpenAI device-code login and allows a fresh retry", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-14T00:00:00Z"));
+    const sentMessages: string[] = [];
+    const cfg = createConfig();
+    const runtime = { error: vi.fn() } as unknown as RuntimeEnv;
+    try {
+      loginRuntimeMockState.runDeviceLoginFlow
+        .mockImplementationOnce(async (opts) => {
+          await opts.sendDeviceCode?.({
+            title: "Sign in with OpenAI",
+            code: "CODE-1",
+            expiresInMinutes: 15,
+          });
+          await new Promise((_resolve, reject) => {
+            opts.signal?.addEventListener(
+              "abort",
+              () =>
+                reject(
+                  opts.signal?.reason instanceof Error
+                    ? opts.signal.reason
+                    : new Error("OpenAI device-code sign-in expired"),
+                ),
+              { once: true },
+            );
+          });
+          throw new Error("unreachable");
+        })
+        .mockImplementationOnce(async (opts) => {
+          await opts.sendDeviceCode?.({
+            title: "Sign in with OpenAI",
+            code: "CODE-2",
+            expiresInMinutes: 15,
+          });
+          return {
+            providerId: "openai",
+            methodId: "device-code",
+            authRefresh: "refreshed",
+            profiles: [{ profileId: "openai:test", provider: "openai", mode: "oauth" }],
+          };
+        });
+
+      const first = startEmployeeCodexDeviceLogin({
+        cfg,
+        runtime,
+        routeAgentId: "kkilgo",
+        sendText: async (message) => {
+          sentMessages.push(message);
+        },
+        log: createMSTeamsMessageHandlerDeps({ cfg, runtime }).log,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      await Promise.resolve();
+
+      await expect(
+        startEmployeeCodexDeviceLogin({
+          cfg,
+          runtime,
+          routeAgentId: "kkilgo",
+          sendText: async (message) => {
+            sentMessages.push(message);
+          },
+          log: createMSTeamsMessageHandlerDeps({ cfg, runtime }).log,
+        }),
+      ).resolves.toEqual({ kind: "completed", finalResponses: 1 });
+
+      vi.setSystemTime(new Date("2026-09-14T00:15:01Z"));
+      const third = startEmployeeCodexDeviceLogin({
+        cfg,
+        runtime,
+        routeAgentId: "kkilgo",
+        sendText: async (message) => {
+          sentMessages.push(message);
+        },
+        log: createMSTeamsMessageHandlerDeps({ cfg, runtime }).log,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      await Promise.resolve();
+
+      expect(loginRuntimeMockState.runDeviceLoginFlow).toHaveBeenCalledTimes(2);
+      await expect(first).resolves.toEqual({ kind: "completed", finalResponses: 2 });
+      await expect(third).resolves.toEqual({ kind: "completed", finalResponses: 2 });
+
+      expect(sentMessages).toEqual([
+        expect.stringContaining("CODE-1"),
+        expect.stringContaining("already active"),
+        "OpenAI sign-in code expired. Send another message when you are ready and I will generate a fresh sign-in code.",
+        expect.stringContaining("CODE-2"),
+        expect.stringContaining("Codex login complete"),
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

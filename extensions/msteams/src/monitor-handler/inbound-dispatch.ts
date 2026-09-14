@@ -11,7 +11,12 @@ import {
 import { bindIngressLifecycleToReplyOptions } from "openclaw/plugin-sdk/channel-outbound";
 import { callGatewayFromCli } from "openclaw/plugin-sdk/gateway-runtime";
 import { setAuthProfileOrder } from "openclaw/plugin-sdk/provider-auth";
-import { runProviderChannelLoginFlow } from "openclaw/plugin-sdk/provider-auth-login-flow-runtime";
+import {
+  createProviderLoginFlowRegistry,
+  releaseProviderLoginFlow,
+  reserveProviderLoginFlow,
+  runProviderChannelLoginFlow,
+} from "openclaw/plugin-sdk/provider-auth-login-flow-runtime";
 import { createChannelHistoryWindow, type HistoryEntry } from "openclaw/plugin-sdk/reply-history";
 import { sliceUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import type { OpenClawConfig, ReplyPayload, RuntimeEnv } from "../../runtime-api.js";
@@ -54,6 +59,7 @@ type GatewayAgentWaitResult = {
 
 const EMPLOYEE_CONTAINER_SESSION_CLAIM_RETRY_ATTEMPTS = 3;
 const EMPLOYEE_CONTAINER_SESSION_CLAIM_RETRY_DELAY_MS = 1_000;
+const activeEmployeeContainerProviderLoginFlows = createProviderLoginFlowRegistry();
 function employeeContainerGatewayClientOptions() {
   return {
     clientName: "gateway-client" as const,
@@ -216,6 +222,28 @@ function isEmployeeContainerAuthEnrollmentTriggerError(err: unknown): boolean {
   return isMissingOpenAIAuthError(err);
 }
 
+function buildEmployeeContainerProviderLoginFlowKey(params: {
+  routeAgentId: string;
+  employeeAgentId: string;
+  providerId: string;
+  methodId: string;
+}): string {
+  return [
+    "msteams-employee-container",
+    params.routeAgentId,
+    params.employeeAgentId,
+    params.providerId,
+    params.methodId,
+  ].join(":");
+}
+
+function isProviderLoginFlowExpired(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === "TimeoutError" || /timed out|expired/i.test(error.message))
+  );
+}
+
 export async function startEmployeeCodexDeviceLogin(params: {
   cfg: OpenClawConfig;
   runtime: RuntimeEnv;
@@ -232,6 +260,35 @@ export async function startEmployeeCodexDeviceLogin(params: {
     return undefined;
   }
   const employeeAgentId = dispatchCfg.agentId?.trim() || "main";
+  const flowKey = buildEmployeeContainerProviderLoginFlowKey({
+    routeAgentId: params.routeAgentId,
+    employeeAgentId,
+    providerId: "openai",
+    methodId: "device-code",
+  });
+  const reservation = reserveProviderLoginFlow({
+    flows: activeEmployeeContainerProviderLoginFlows,
+    flowKey,
+    replacementMessage: "OpenAI device-code sign-in expired; start a fresh sign-in request.",
+  });
+  if (reservation.status === "active") {
+    const message =
+      "OpenAI sign-in is already active for this employee agent. Complete the current sign-in in the app/browser, or send another message after the code expires and I will generate a fresh code.";
+    if (params.sendText) {
+      await params.sendText(message);
+    } else if (params.delivery) {
+      // SAFETY: The delivery implementation treats this metadata as opaque reply lifecycle tags.
+      const delivered = await params.delivery.deliver({ text: message }, {
+        kind: "final",
+        stage: "final",
+      } as never); // SAFETY: The delivery implementation treats this metadata as opaque reply lifecycle tags.
+      await params.settleDelivery?.();
+      await delivered?.finalization;
+    } else {
+      throw new Error("employee Codex login delivery target missing");
+    }
+    return { kind: "completed", finalResponses: 1 };
+  }
   const hostRoot = resolveEmployeeHostRoot(dispatchCfg, params.routeAgentId);
   const employeeCfg = prepareEmployeeCodexLoginConfig({
     cfg: await readEmployeeContainerConfig(dispatchCfg, params.routeAgentId),
@@ -263,26 +320,44 @@ export async function startEmployeeCodexDeviceLogin(params: {
     finalResponses += 1;
   };
 
-  const loginResult = await runProviderChannelLoginFlow({
-    choice: {
-      choiceId: "openai-device-code",
-      pluginId: "openai",
-      providerId: "openai",
-      methodId: "device-code",
-      label: "OpenAI device code",
-      providerLabel: "OpenAI",
-      command: "openai/openai-device-code",
-      mode: "sign-in",
-    },
-    agentId: employeeAgentId,
-    config: employeeCfg,
-    runtime: params.runtime,
-    sendMessage: deliverText,
-    sendDeviceCode: async (deviceCode) => {
-      await deliverText(formatTeamsLoginDeviceCode(deviceCode));
-    },
-    unsupportedPromptMessage: "Teams onboarding supports only fixed Codex device-code auth.",
-  });
+  let loginResult;
+  try {
+    loginResult = await runProviderChannelLoginFlow({
+      choice: {
+        choiceId: "openai-device-code",
+        pluginId: "openai",
+        providerId: "openai",
+        methodId: "device-code",
+        label: "OpenAI device code",
+        providerLabel: "OpenAI",
+        command: "openai/openai-device-code",
+        mode: "sign-in",
+      },
+      agentId: employeeAgentId,
+      config: employeeCfg,
+      runtime: params.runtime,
+      sendMessage: deliverText,
+      sendDeviceCode: async (deviceCode) => {
+        await deliverText(formatTeamsLoginDeviceCode(deviceCode));
+      },
+      signal: reservation.record.signal,
+      unsupportedPromptMessage: "Teams onboarding supports only fixed Codex device-code auth.",
+    });
+  } catch (error) {
+    if (isProviderLoginFlowExpired(error)) {
+      await deliverText(
+        "OpenAI sign-in code expired. Send another message when you are ready and I will generate a fresh sign-in code.",
+      );
+      return { kind: "completed", finalResponses };
+    }
+    throw error;
+  } finally {
+    releaseProviderLoginFlow({
+      flows: activeEmployeeContainerProviderLoginFlows,
+      flowKey,
+      record: reservation.record,
+    });
+  }
   const hasOpenAIProfile = loginResult.profiles.some((profile) => profile.provider === "openai");
   const openAIProfileId = loginResult.profiles.find(
     (profile) => profile.provider === "openai",
