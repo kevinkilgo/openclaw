@@ -38,9 +38,7 @@ vi.mock("openclaw/plugin-sdk/gateway-runtime", () => ({
 }));
 
 vi.mock("openclaw/plugin-sdk/provider-auth-login-flow-runtime", () => ({
-  codexChannelLoginRuntime: {
-    runDeviceLoginFlow: loginRuntimeMockState.runDeviceLoginFlow,
-  },
+  runProviderChannelLoginFlow: loginRuntimeMockState.runDeviceLoginFlow,
 }));
 
 vi.mock("../../../src/agents/auth-profiles.js", () => ({
@@ -212,7 +210,11 @@ describe("msteams employee container dispatch", () => {
 
     expect(loginRuntimeMockState.runDeviceLoginFlow).toHaveBeenCalledWith(
       expect.objectContaining({
-        provider: "openai",
+        choice: expect.objectContaining({
+          pluginId: "openai",
+          providerId: "openai",
+          methodId: "device-code",
+        }),
         agentId: "main",
         config: expect.objectContaining({
           agents: expect.objectContaining({
@@ -295,7 +297,11 @@ describe("msteams employee container dispatch", () => {
 
     expect(loginRuntimeMockState.runDeviceLoginFlow).toHaveBeenCalledWith(
       expect.objectContaining({
-        provider: "openai",
+        choice: expect.objectContaining({
+          pluginId: "openai",
+          providerId: "openai",
+          methodId: "device-code",
+        }),
         agentId: "main",
       }),
     );

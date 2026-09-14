@@ -247,9 +247,6 @@ const rootEntries = [
   "scripts/e2e/*.{js,mjs,ts}!",
   "scripts/e2e/lib/**/{assertions,probe,mock-server}.{js,mjs,ts}!",
   "src/agents/prepared-model-catalog.worker.ts!",
-  // Teams onboarding repair commands are invoked by operator/provisioner flows.
-  "extensions/msteams/src/employee-onboarding-provisioning.ts!",
-  "extensions/msteams/src/employee-onboarding-reset.ts!",
   // Split runtime loaded through a path assembled in subagent-registry.ts.
   "src/agents/subagents/registry/subagent-registry.runtime.ts!",
   // Loaded lazily by the sweeper only when a receipt-bearing or interrupted row is found.
@@ -858,6 +855,12 @@ const config = {
     [`${BUNDLED_PLUGIN_ROOT_DIR}/minimax`]: bundledPluginWorkspace(),
     [`${BUNDLED_PLUGIN_ROOT_DIR}/mistral`]: bundledPluginWorkspace(),
     [`${BUNDLED_PLUGIN_ROOT_DIR}/moonshot`]: bundledPluginWorkspace(),
+    [`${BUNDLED_PLUGIN_ROOT_DIR}/msteams`]: bundledPluginWorkspace([
+      // Teams onboarding repair commands are invoked by operator/provisioner flows.
+      "src/employee-onboarding.ts!",
+      "src/employee-onboarding-provisioning.ts!",
+      "src/employee-onboarding-reset.ts!",
+    ]),
     [`${BUNDLED_PLUGIN_ROOT_DIR}/mxc`]: bundledPluginWorkspace([
       // Copied to dist and spawned by the MXC backend.
       "src/mxc-spawn-launcher.mjs!",

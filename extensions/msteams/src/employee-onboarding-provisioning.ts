@@ -96,7 +96,7 @@ export type MSTeamsEmployeeOnboardingProvisioningPlan = {
   sideEffects: [];
 };
 
-export type MSTeamsEmployeeOnboardingProvisioningBlockedPlan = {
+type MSTeamsEmployeeOnboardingProvisioningBlockedPlan = {
   dryRun: true;
   status: "blocked";
   requestId?: string;

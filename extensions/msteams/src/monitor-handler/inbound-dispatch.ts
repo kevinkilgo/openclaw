@@ -10,10 +10,11 @@ import {
 } from "openclaw/plugin-sdk/channel-inbound";
 import { bindIngressLifecycleToReplyOptions } from "openclaw/plugin-sdk/channel-outbound";
 import { callGatewayFromCli } from "openclaw/plugin-sdk/gateway-runtime";
-import { codexChannelLoginRuntime } from "openclaw/plugin-sdk/provider-auth-login-flow-runtime";
+import { runProviderChannelLoginFlow } from "openclaw/plugin-sdk/provider-auth-login-flow-runtime";
 import { createChannelHistoryWindow, type HistoryEntry } from "openclaw/plugin-sdk/reply-history";
 import { sliceUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import { setAuthProfileOrder } from "../../../../src/agents/auth-profiles.js";
+import type { OperatorScope } from "../../../../src/gateway/operator-scopes.js";
 import type { OpenClawConfig, ReplyPayload, RuntimeEnv } from "../../runtime-api.js";
 import { formatUnknownError } from "../errors.js";
 import type { MSTeamsMessageHandlerDeps } from "../monitor-handler.types.js";
@@ -40,6 +41,12 @@ type MSTeamsEmployeeContainerDispatchConfig = {
   waitTimeoutMs?: number;
 };
 
+type MSTeamsConfigWithEmployeeContainerDispatch = NonNullable<
+  OpenClawConfig["channels"]
+>["msteams"] & {
+  employeeContainerDispatch?: MSTeamsEmployeeContainerDispatchConfig;
+};
+
 type GatewayAgentAccepted = {
   runId?: string;
 };
@@ -58,7 +65,7 @@ function employeeContainerGatewayClientOptions() {
   return {
     clientName: "gateway-client" as const,
     mode: "backend" as const,
-    scopes: ["operator.write"],
+    scopes: ["operator.write"] satisfies OperatorScope[],
   };
 }
 
@@ -97,9 +104,8 @@ type EmployeeContainerOpenClawConfig = OpenClawConfig & {
 function readEmployeeContainerDispatchConfig(
   cfg: OpenClawConfig,
 ): MSTeamsEmployeeContainerDispatchConfig | undefined {
-  return cfg.channels?.msteams?.employeeContainerDispatch as
-    | MSTeamsEmployeeContainerDispatchConfig
-    | undefined;
+  return (cfg.channels?.msteams as MSTeamsConfigWithEmployeeContainerDispatch | undefined)
+    ?.employeeContainerDispatch;
 }
 
 function fillEmployeeTemplate(template: string, agentId: string): string {
@@ -216,7 +222,7 @@ function isEmployeeContainerAuthEnrollmentTriggerError(err: unknown): boolean {
   return isMissingOpenAIAuthError(err);
 }
 
-export async function startEmployeeCodexDeviceLogin(params: {
+async function startEmployeeCodexDeviceLogin(params: {
   cfg: OpenClawConfig;
   runtime: RuntimeEnv;
   routeAgentId: string;
@@ -262,8 +268,17 @@ export async function startEmployeeCodexDeviceLogin(params: {
     finalResponses += 1;
   };
 
-  const loginResult = await codexChannelLoginRuntime.runDeviceLoginFlow({
-    provider: "openai",
+  const loginResult = await runProviderChannelLoginFlow({
+    choice: {
+      choiceId: "openai-device-code",
+      pluginId: "openai",
+      providerId: "openai",
+      methodId: "device-code",
+      label: "OpenAI device code",
+      providerLabel: "OpenAI",
+      command: "openai/openai-device-code",
+      mode: "sign-in",
+    },
     agentId: employeeAgentId,
     config: employeeCfg,
     runtime: params.runtime,
