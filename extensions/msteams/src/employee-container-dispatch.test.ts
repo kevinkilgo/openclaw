@@ -175,7 +175,7 @@ describe("msteams employee container dispatch", () => {
         deliver: false,
         sourceReplyDeliveryMode: "automatic",
       }),
-      { scopes: ["operator.write"], deviceIdentity: null },
+      { clientName: "gateway-client", mode: "backend", scopes: ["operator.write"] },
     );
     expect(gatewayRuntimeMockState.callGatewayFromCli).toHaveBeenNthCalledWith(
       2,
@@ -186,7 +186,7 @@ describe("msteams employee container dispatch", () => {
         timeout: "15000",
       },
       { runId: "run-1", timeoutMs: 5000 },
-      { scopes: ["operator.write"], deviceIdentity: null },
+      { clientName: "gateway-client", mode: "backend", scopes: ["operator.write"] },
     );
     expect(replyDispatcherMockState.deliver).toHaveBeenCalledWith(
       { text: "Reply from employee main" },
@@ -269,7 +269,7 @@ describe("msteams employee container dispatch", () => {
         agentId: "main",
         sessionKey: "agent:main:msteams:direct:user-aad",
       }),
-      { scopes: ["operator.write"], deviceIdentity: null },
+      { clientName: "gateway-client", mode: "backend", scopes: ["operator.write"] },
     );
     expect(replyDispatcherMockState.deliver).toHaveBeenCalledWith(
       { text: "Recovered reply" },
