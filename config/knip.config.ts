@@ -228,6 +228,8 @@ const rootEntries = [
   "src/commands/status.ts!",
   "src/cli/daemon-cli.ts!",
   "src/agents/code-mode.worker.ts!",
+  // Shadow-only agent-control planner is wired by approval-gated runtime routes.
+  "src/agents/control/agent-control.ts!",
   // Worker-thread and script entrypoints import contracts that production Knip cannot trace.
   "src/agents/compaction-planning.worker.ts!",
   "src/config/sessions/disk-budget.worker.ts!",
@@ -245,6 +247,9 @@ const rootEntries = [
   "scripts/e2e/*.{js,mjs,ts}!",
   "scripts/e2e/lib/**/{assertions,probe,mock-server}.{js,mjs,ts}!",
   "src/agents/prepared-model-catalog.worker.ts!",
+  // Teams onboarding repair commands are invoked by operator/provisioner flows.
+  "extensions/msteams/src/employee-onboarding-provisioning.ts!",
+  "extensions/msteams/src/employee-onboarding-reset.ts!",
   // Split runtime loaded through a path assembled in subagent-registry.ts.
   "src/agents/subagents/registry/subagent-registry.runtime.ts!",
   // Loaded lazily by the sweeper only when a receipt-bearing or interrupted row is found.
@@ -510,6 +515,11 @@ const config = {
     // Focused tests consume these diagnostic/test seams; production code uses
     // the surrounding runtime helpers rather than importing the exports.
     "extensions/signal/src/setup-core.ts": ["exports"],
+    // Operator-facing Teams ingress cleanup is invoked through approval-gated
+    // runbooks and direct dry-run checks, not through the normal plugin graph.
+    "extensions/msteams/src/msteams-ingress.ts": ["exports", "types"],
+    // Exported for employee auth remediation wiring and covered by focused tests.
+    "extensions/msteams/src/monitor-handler/inbound-dispatch.ts": ["exports"],
     // Focused CLI tests exercise plan construction through this explicit test seam.
     "extensions/onepassword/src/secret-ref-cli.ts": ["exports"],
     // Mirror config parsing, redaction mapping, cap fitting, and the runner are
