@@ -1,0 +1,23 @@
+{
+  "run_id": "20260914T222900Z-router-pr2-rollout",
+  "service": "openclaw-gateway-lanes-prod-swarm_gateway-router",
+  "image": "local/openclaw-gateway:2026.8.1-msteams-router-pr2-startup-migration-205be517344-20260914T221000Z",
+  "revision": "205be517344e0d87c3bc81d120d37043afa1e6a0",
+  "router_health": {"docker": "healthy", "http": {"ok": true, "status": "live"}},
+  "employee_services": {
+    "kkilgo": "1/1",
+    "jowen": "1/1",
+    "rstephens": "1/1",
+    "hdadabhoy": "1/1",
+    "babbey": "1/1",
+    "dmathis": "1/1"
+  },
+  "employee_smokes": {
+    "kkilgo": "EMPLOYEE_READY_OK",
+    "jowen": "EMPLOYEE_READY_OK",
+    "rstephens": "EMPLOYEE_READY_OK",
+    "hdadabhoy": "EMPLOYEE_READY_OK",
+    "babbey": "EMPLOYEE_READY_OK",
+    "dmathis": "EMPLOYEE_READY_OK"
+  }
+}
