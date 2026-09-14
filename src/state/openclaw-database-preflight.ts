@@ -29,8 +29,14 @@ import {
 } from "../infra/sqlite-user-version.js";
 import { discoverAgentDatabaseMigrationTargets } from "../infra/state-migrations.media-persistence-targets.js";
 import { isValidAgentId } from "../routing/session-key.js";
-import { OPENCLAW_AGENT_SCHEMA_VERSION } from "./openclaw-agent-db-contract.js";
-import { assertOpenClawAgentDatabaseForMaintenance } from "./openclaw-agent-db-maintenance.js";
+import {
+  AGENT_MEDIA_SCHEMA_VERSION,
+  OPENCLAW_AGENT_SCHEMA_VERSION,
+} from "./openclaw-agent-db-contract.js";
+import {
+  assertOpenClawAgentDatabaseForMaintenance,
+  assertOpenClawAgentDatabaseOwner,
+} from "./openclaw-agent-db-maintenance.js";
 import { isPersistentOpenClawAgentDatabasePath } from "./openclaw-agent-db-registry.js";
 import {
   assertOpenClawAgentCurrentRuntimeSchema,
@@ -712,19 +718,27 @@ export async function preflightOpenClawDatabaseSchemas(options: {
         });
       }
       if (agentVersion <= options.supportedVersions.agent) {
-        if (options.requireStartupMigrationReadiness) {
-          assertSqliteIntegrity(agentDatabase, agentPath);
-          assertCanonicalAgentPersistenceVersion(agentDatabase, agentPath, agentVersion);
-        }
         const agentId =
           row.agentId ??
           (options.requireStartupMigrationReadiness
             ? readExistingAgentSchemaMeta(agentDatabase)?.agentId
             : undefined);
+        if (options.requireStartupMigrationReadiness) {
+          assertSqliteIntegrity(agentDatabase, agentPath);
+          if (agentVersion < AGENT_MEDIA_SCHEMA_VERSION) {
+            assertCanonicalAgentPersistenceVersion(agentDatabase, agentPath, agentVersion);
+          } else if (agentId != null) {
+            assertOpenClawAgentDatabaseOwner(agentDatabase, {
+              agentId,
+              pathname: agentPath,
+            });
+          }
+        }
         if (
           options.verifyCurrentSchemaShape === true &&
           agentId != null &&
-          (!options.requireStartupMigrationReadiness || agentVersion > 0)
+          (!options.requireStartupMigrationReadiness ||
+            agentVersion === options.supportedVersions.agent)
         ) {
           assertOpenClawAgentDatabaseForMaintenance(agentDatabase, {
             agentId,
