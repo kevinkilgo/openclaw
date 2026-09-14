@@ -222,7 +222,7 @@ function isEmployeeContainerAuthEnrollmentTriggerError(err: unknown): boolean {
   return isMissingOpenAIAuthError(err);
 }
 
-async function startEmployeeCodexDeviceLogin(params: {
+export async function startEmployeeCodexDeviceLogin(params: {
   cfg: OpenClawConfig;
   runtime: RuntimeEnv;
   routeAgentId: string;
@@ -564,9 +564,7 @@ export async function dispatchMSTeamsInboundTurn(params: {
             }).allowed,
         })
       : true;
-  const bodyForAgent = threadContext
-    ? `[Thread history]\n${threadContext}\n[/Thread history]\n\n${agentBody}`
-    : agentBody;
+  const bodyForAgent = agentBody;
   // Teams channel actions need both the AAD group and Graph channel ids.
   const nativeChannelId =
     isChannel && teamAadGroupId ? `${teamAadGroupId}/${graphChannelId}` : undefined;
@@ -598,6 +596,21 @@ export async function dispatchMSTeamsInboundTurn(params: {
             isQuote: true,
           }
         : undefined,
+      channelStructuredContext:
+        threadContext.length > 0
+          ? [
+              {
+                label: "Thread history",
+                type: "chat_window" as const,
+                source: "msteams",
+                sessionTranscriptMode: "preserve" as const,
+                payload: {
+                  order: "chronological",
+                  messages: threadContext,
+                },
+              },
+            ]
+          : undefined,
     },
     media: await toInboundMediaFactsWithMetadata(inboundMedia),
     messageId: activity.id,
