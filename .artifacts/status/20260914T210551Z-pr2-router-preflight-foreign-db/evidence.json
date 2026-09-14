@@ -1,0 +1,41 @@
+{
+  "status_run_id": "20260914T210551Z-pr2-router-preflight-foreign-db",
+  "evidence": [
+    {
+      "id": "diff-preflight-scope",
+      "kind": "source_diff",
+      "summary": "Gateway startup now resolves router/default DB candidate paths and sets includePersistentRegisteredAgentDatabases=false."
+    },
+    {
+      "id": "regression-foreign-agent",
+      "kind": "test",
+      "command": "node scripts/run-vitest.mjs run src/state/openclaw-database-preflight.test.ts -t \"Gateway startup\"",
+      "result": "passed",
+      "detail": "Includes does-not-block Gateway startup on registered employee DB outside router store."
+    },
+    {
+      "id": "regression-router-agent",
+      "kind": "test",
+      "command": "node scripts/run-vitest.mjs run src/state/openclaw-database-preflight.test.ts -t \"Gateway startup\"",
+      "result": "passed",
+      "detail": "Includes still-blocks Gateway startup when router-owned DB needs migration."
+    },
+    {
+      "id": "typecheck",
+      "kind": "test",
+      "command": "pnpm tsgo:core",
+      "result": "passed"
+    },
+    {
+      "id": "whitespace",
+      "kind": "test",
+      "command": "git diff --check",
+      "result": "passed"
+    },
+    {
+      "id": "git-status-scope",
+      "kind": "git",
+      "summary": "Only source/test patch files are modified by this lane; pre-existing untracked backup files remain untouched."
+    }
+  ]
+}

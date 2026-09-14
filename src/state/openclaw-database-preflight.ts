@@ -1,8 +1,12 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import { resolveUnsuffixedSqliteTargetFromSessionStorePath } from "../config/sessions/session-sqlite-target.js";
-import { resolveConfiguredAgentDatabaseCandidatePaths } from "../config/sessions/targets.js";
+import { resolveSessionStoreCompatibilityAgentId } from "../config/legacy.default-agent-owner.js";
+import { resolveSessionStorePathCore } from "../config/sessions/paths.js";
+import {
+  listSqliteTargetCandidatePathsForSessionStorePath,
+  resolveUnsuffixedSqliteTargetFromSessionStorePath,
+} from "../config/sessions/session-sqlite-target.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import {
@@ -111,6 +115,16 @@ type AgentRegistryDatabase = Pick<OpenClawStateKyselyDatabase, "agent_databases"
 
 type OpenClawDatabaseSchemaPreflightOperation = "doctor" | "gateway-restart" | "gateway-startup";
 
+function resolveGatewayStartupAgentDatabaseCandidatePaths(
+  config: OpenClawConfig,
+  env: NodeJS.ProcessEnv,
+): string[] {
+  const routerAgentId = resolveSessionStoreCompatibilityAgentId(config);
+  return listSqliteTargetCandidatePathsForSessionStorePath(
+    resolveSessionStorePathCore(config.session?.store, { agentId: routerAgentId, env }),
+  );
+}
+
 function formatDoctorIncompatibleDatabase(database: IncompatibleOpenClawDatabase): string {
   const agent = database.agentId ? ` for agent ${database.agentId}` : "";
   const writer = database.writerAppVersion ? `; writer build ${database.writerAppVersion}` : "";
@@ -169,10 +183,11 @@ export async function assertOpenClawDatabasesReady(
           // Inspect candidate owners from preserved snapshots: runtime target
           // resolution opens custom stores directly and can create WAL sidecars.
           configuredAgentDatabaseTargets: [],
-          configuredAgentDatabaseCandidatePaths: resolveConfiguredAgentDatabaseCandidatePaths(
+          configuredAgentDatabaseCandidatePaths: resolveGatewayStartupAgentDatabaseCandidatePaths(
             options.config,
-            { env: options.env },
+            options.env,
           ),
+          includePersistentRegisteredAgentDatabases: false,
         }
       : {}),
     ...(options.operation === "doctor"
@@ -458,6 +473,7 @@ export async function preflightOpenClawDatabaseSchemas(options: {
         registeredDatabases: readonly { agentId: string; path: string }[],
       ) => readonly { agentId: string; path: string }[]);
   configuredAgentDatabaseCandidatePaths?: readonly string[];
+  includePersistentRegisteredAgentDatabases?: boolean;
 }): Promise<OpenClawDatabaseSchemaPreflight> {
   options.signal?.throwIfAborted();
   const result: OpenClawDatabaseSchemaPreflight = { incompatible: [], indeterminate: [] };
@@ -622,7 +638,10 @@ export async function preflightOpenClawDatabaseSchemas(options: {
       configuredAgentDatabaseTargets: configuredTargets,
       registeredAgentDatabases: registeredDatabases,
     });
-    agentTargets = discovery.targets;
+    agentTargets =
+      options.includePersistentRegisteredAgentDatabases === false
+        ? [...configuredTargets]
+        : discovery.targets;
     for (const failure of discovery.failures) {
       result.indeterminate.push({ kind: "agent", ...failure });
     }
@@ -633,7 +652,8 @@ export async function preflightOpenClawDatabaseSchemas(options: {
     ...agentTargets,
     // Migration discovery intentionally declines ownership of foreign registry
     // paths. Preflight remains read-only, so preserve their downgrade guard.
-    ...(options.configuredAgentDatabaseTargets !== undefined
+    ...(options.configuredAgentDatabaseTargets !== undefined &&
+    options.includePersistentRegisteredAgentDatabases !== false
       ? registeredDatabases.filter((database) =>
           isPersistentOpenClawAgentDatabasePath(database.path, options.env),
         )

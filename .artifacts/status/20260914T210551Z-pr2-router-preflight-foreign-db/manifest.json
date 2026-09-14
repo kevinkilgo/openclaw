@@ -1,0 +1,28 @@
+{
+  "status_run_id": "20260914T210551Z-pr2-router-preflight-foreign-db",
+  "schema": "openclaw.status-artifact.v1",
+  "overall_result": "patched_pending_rebuild",
+  "files": [
+    {
+      "path": "summary.md",
+      "sha256": "03358400aa60745ef47772cbf4e15d69c2cec889fab5104c545d6b3d4d787cf1",
+      "bytes": 2374
+    },
+    {
+      "path": "claims.json",
+      "sha256": "1d0c54f1805c0ec4d9e95bd2e9166aba64b503c4860da19636ae7f68b57ff491",
+      "bytes": 896
+    },
+    {
+      "path": "evidence.json",
+      "sha256": "833fea1741587a0e615a57ec116c3113a01136e9136a187463829d1397cb99ed",
+      "bytes": 1393
+    },
+    {
+      "path": "manifest.json",
+      "sha256": "a52ca1184e6221f79a4188cbf7104f0e22854a19dac3ac325c48a2664e1c2d8c",
+      "bytes": 736
+    }
+  ],
+  "manifest_sha256": "a52ca1184e6221f79a4188cbf7104f0e22854a19dac3ac325c48a2664e1c2d8c"
+}

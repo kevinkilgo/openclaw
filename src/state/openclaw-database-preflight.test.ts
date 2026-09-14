@@ -876,6 +876,59 @@ describe("OpenClaw database schema preflight", () => {
     ]);
   });
 
+  it("does not block Gateway startup on a registered employee database outside the router store", async () => {
+    const stateDir = tempDirs.make("openclaw-startup-foreign-agent-");
+    const env = { OPENCLAW_STATE_DIR: stateDir };
+    openOpenClawAgentDatabase({ agentId: "main", env });
+    const employeePath = openOpenClawAgentDatabase({ agentId: "babbey", env }).path;
+    closeOpenClawAgentDatabasesForTest();
+    closeOpenClawStateDatabaseForTest();
+
+    const { DatabaseSync } = requireNodeSqlite();
+    const employee = new DatabaseSync(employeePath);
+    try {
+      employee.exec(
+        `PRAGMA user_version = ${OPENCLAW_AGENT_SCHEMA_VERSION - 2}; UPDATE schema_meta SET schema_version = ${OPENCLAW_AGENT_SCHEMA_VERSION - 2} WHERE meta_key = 'primary';`,
+      );
+    } finally {
+      employee.close();
+    }
+
+    await expect(
+      assertOpenClawDatabasesReady({
+        env,
+        operation: "gateway-startup",
+        config: { agents: { ownership: "explicit", entries: { main: {}, babbey: {} } } },
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("still blocks Gateway startup when the router-owned database needs migration", async () => {
+    const stateDir = tempDirs.make("openclaw-startup-router-agent-");
+    const env = { OPENCLAW_STATE_DIR: stateDir };
+    const routerPath = openOpenClawAgentDatabase({ agentId: "main", env }).path;
+    closeOpenClawAgentDatabasesForTest();
+    closeOpenClawStateDatabaseForTest();
+
+    const { DatabaseSync } = requireNodeSqlite();
+    const router = new DatabaseSync(routerPath);
+    try {
+      router.exec(
+        `PRAGMA user_version = ${OPENCLAW_AGENT_SCHEMA_VERSION - 2}; UPDATE schema_meta SET schema_version = ${OPENCLAW_AGENT_SCHEMA_VERSION - 2} WHERE meta_key = 'primary';`,
+      );
+    } finally {
+      router.close();
+    }
+
+    await expect(
+      assertOpenClawDatabasesReady({
+        env,
+        operation: "gateway-startup",
+        config: { agents: { ownership: "explicit", entries: { main: {} } } },
+      }),
+    ).rejects.toThrow(/stop active agents and run openclaw doctor --fix/iu);
+  });
+
   it("reports a current but noncanonical registered agent schema as indeterminate", async () => {
     const stateDir = tempDirs.make("openclaw-database-preflight-noncanonical-agent-");
     const env = { OPENCLAW_STATE_DIR: stateDir };
