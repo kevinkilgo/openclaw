@@ -1,0 +1,443 @@
+[
+    {
+        "Id": "2b57aa06b6af09201bcc8ce835cbecfbd2792b01e2250ab8c10bf32f1fb014ae",
+        "Created": "2026-09-14T22:24:58.975699686Z",
+        "Path": "tini",
+        "Args": [
+            "-s",
+            "--",
+            "sh",
+            "-lc",
+            "export OPENCLAW_GATEWAY_TOKEN=$(cat /run/secrets/gateway_router_token); exec openclaw gateway --port 18789"
+        ],
+        "State": {
+            "Status": "running",
+            "Running": true,
+            "Paused": false,
+            "Restarting": false,
+            "OOMKilled": false,
+            "Dead": false,
+            "Pid": 1869537,
+            "ExitCode": 0,
+            "Error": "",
+            "StartedAt": "2026-09-14T22:25:02.855492056Z",
+            "FinishedAt": "0001-01-01T00:00:00Z",
+            "Health": {
+                "Status": "healthy",
+                "FailingStreak": 0,
+                "Log": [
+                    {
+                        "Start": "2026-09-14T22:25:21.442555411Z",
+                        "End": "2026-09-14T22:25:22.701605755Z",
+                        "ExitCode": 1,
+                        "Output": ""
+                    },
+                    {
+                        "Start": "2026-09-14T22:28:22.702436973Z",
+                        "End": "2026-09-14T22:28:24.030468795Z",
+                        "ExitCode": 0,
+                        "Output": ""
+                    },
+                    {
+                        "Start": "2026-09-14T22:31:24.033347138Z",
+                        "End": "2026-09-14T22:31:26.175692342Z",
+                        "ExitCode": 0,
+                        "Output": ""
+                    },
+                    {
+                        "Start": "2026-09-14T22:34:26.176543555Z",
+                        "End": "2026-09-14T22:34:27.406456019Z",
+                        "ExitCode": 0,
+                        "Output": ""
+                    },
+                    {
+                        "Start": "2026-09-14T22:37:27.407624113Z",
+                        "End": "2026-09-14T22:37:28.772759092Z",
+                        "ExitCode": 0,
+                        "Output": ""
+                    }
+                ]
+            }
+        },
+        "Image": "sha256:f763e04168b1f8c5743574cc60d9bcfceafa08753ce468fc5ad16899ceb6b113",
+        "ResolvConfPath": "/var/lib/docker/containers/2b57aa06b6af09201bcc8ce835cbecfbd2792b01e2250ab8c10bf32f1fb014ae/resolv.conf",
+        "HostnamePath": "/var/lib/docker/containers/2b57aa06b6af09201bcc8ce835cbecfbd2792b01e2250ab8c10bf32f1fb014ae/hostname",
+        "HostsPath": "/var/lib/docker/containers/2b57aa06b6af09201bcc8ce835cbecfbd2792b01e2250ab8c10bf32f1fb014ae/hosts",
+        "LogPath": "/var/lib/docker/containers/2b57aa06b6af09201bcc8ce835cbecfbd2792b01e2250ab8c10bf32f1fb014ae/2b57aa06b6af09201bcc8ce835cbecfbd2792b01e2250ab8c10bf32f1fb014ae-json.log",
+        "Name": "/openclaw-gateway-lanes-prod-swarm_gateway-router.1.km20znnzs2064p8ahjzljbju3",
+        "RestartCount": 0,
+        "Driver": "overlayfs",
+        "Platform": "linux",
+        "MountLabel": "",
+        "ProcessLabel": "",
+        "AppArmorProfile": "docker-default",
+        "ExecIDs": null,
+        "HostConfig": {
+            "Binds": null,
+            "ContainerIDFile": "",
+            "LogConfig": {
+                "Type": "json-file",
+                "Config": {
+                    "max-file": "5",
+                    "max-size": "10m"
+                }
+            },
+            "NetworkMode": "bridge",
+            "PortBindings": {},
+            "RestartPolicy": {
+                "Name": "no",
+                "MaximumRetryCount": 0
+            },
+            "AutoRemove": false,
+            "VolumeDriver": "",
+            "VolumesFrom": null,
+            "ConsoleSize": [
+                0,
+                0
+            ],
+            "CapAdd": null,
+            "CapDrop": null,
+            "CgroupnsMode": "private",
+            "Dns": null,
+            "DnsOptions": null,
+            "DnsSearch": null,
+            "ExtraHosts": null,
+            "GroupAdd": null,
+            "IpcMode": "private",
+            "Cgroup": "",
+            "Links": null,
+            "OomScoreAdj": 0,
+            "PidMode": "",
+            "Privileged": false,
+            "PublishAllPorts": false,
+            "ReadonlyRootfs": false,
+            "SecurityOpt": null,
+            "UTSMode": "",
+            "UsernsMode": "",
+            "ShmSize": 67108864,
+            "Runtime": "runc",
+            "Isolation": "default",
+            "CpuShares": 0,
+            "Memory": 0,
+            "NanoCpus": 0,
+            "CgroupParent": "",
+            "BlkioWeight": 0,
+            "BlkioWeightDevice": null,
+            "BlkioDeviceReadBps": null,
+            "BlkioDeviceWriteBps": null,
+            "BlkioDeviceReadIOps": null,
+            "BlkioDeviceWriteIOps": null,
+            "CpuPeriod": 0,
+            "CpuQuota": 0,
+            "CpuRealtimePeriod": 0,
+            "CpuRealtimeRuntime": 0,
+            "CpusetCpus": "",
+            "CpusetMems": "",
+            "Devices": null,
+            "DeviceCgroupRules": null,
+            "DeviceRequests": null,
+            "MemoryReservation": 0,
+            "MemorySwap": 0,
+            "MemorySwappiness": null,
+            "OomKillDisable": null,
+            "PidsLimit": null,
+            "Ulimits": [],
+            "CpuCount": 0,
+            "CpuPercent": 0,
+            "IOMaximumIOps": 0,
+            "IOMaximumBandwidth": 0,
+            "Mounts": [
+                {
+                    "Type": "bind",
+                    "Source": "/srv/openclaw/data/employee-agents",
+                    "Target": "/srv/openclaw/data/employee-agents"
+                },
+                {
+                    "Type": "bind",
+                    "Source": "/srv/openclaw/data/gateway-lanes-prod/configs/gateway-router",
+                    "Target": "/home/openclaw/config"
+                },
+                {
+                    "Type": "bind",
+                    "Source": "/srv/openclaw/data/gateway-lanes-prod/shared/artifacts",
+                    "Target": "/shared/artifacts"
+                },
+                {
+                    "Type": "bind",
+                    "Source": "/srv/openclaw/data/gateway-lanes-prod/shared/bin/clawtop",
+                    "Target": "/usr/local/bin/clawtop",
+                    "ReadOnly": true
+                },
+                {
+                    "Type": "bind",
+                    "Source": "/srv/openclaw/data/gateway-lanes-prod/shared/task-inputs",
+                    "Target": "/shared/task-inputs",
+                    "ReadOnly": true
+                },
+                {
+                    "Type": "bind",
+                    "Source": "/srv/openclaw/data/gateway-lanes-prod/shared/task-results",
+                    "Target": "/shared/task-results"
+                },
+                {
+                    "Type": "bind",
+                    "Source": "/srv/openclaw/data/gateway-lanes-prod/state/gateway-router/.openclaw",
+                    "Target": "/home/openclaw/.openclaw"
+                },
+                {
+                    "Type": "bind",
+                    "Source": "/srv/openclaw/data/gateway-lanes-prod/workspaces/gateway-router",
+                    "Target": "/home/openclaw/workspace"
+                }
+            ],
+            "MaskedPaths": [
+                "/proc/acpi",
+                "/proc/asound",
+                "/proc/interrupts",
+                "/proc/kcore",
+                "/proc/keys",
+                "/proc/latency_stats",
+                "/proc/sched_debug",
+                "/proc/scsi",
+                "/proc/timer_list",
+                "/proc/timer_stats",
+                "/sys/devices/virtual/powercap",
+                "/sys/firmware"
+            ],
+            "ReadonlyPaths": [
+                "/proc/bus",
+                "/proc/fs",
+                "/proc/irq",
+                "/proc/sys",
+                "/proc/sysrq-trigger"
+            ]
+        },
+        "Storage": {
+            "RootFS": {
+                "Snapshot": {
+                    "Name": "overlayfs"
+                }
+            }
+        },
+        "Mounts": [
+            {
+                "Type": "bind",
+                "Source": "/srv/openclaw/data/gateway-lanes-prod/state/gateway-router/.openclaw",
+                "Destination": "/home/openclaw/.openclaw",
+                "Mode": "",
+                "RW": true,
+                "Propagation": "rprivate"
+            },
+            {
+                "Type": "bind",
+                "Source": "/srv/openclaw/data/gateway-lanes-prod/workspaces/gateway-router",
+                "Destination": "/home/openclaw/workspace",
+                "Mode": "",
+                "RW": true,
+                "Propagation": "rprivate"
+            },
+            {
+                "Type": "bind",
+                "Source": "/srv/openclaw/data/employee-agents",
+                "Destination": "/srv/openclaw/data/employee-agents",
+                "Mode": "",
+                "RW": true,
+                "Propagation": "rprivate"
+            },
+            {
+                "Type": "bind",
+                "Source": "/srv/openclaw/data/gateway-lanes-prod/configs/gateway-router",
+                "Destination": "/home/openclaw/config",
+                "Mode": "",
+                "RW": true,
+                "Propagation": "rprivate"
+            },
+            {
+                "Type": "bind",
+                "Source": "/srv/openclaw/data/gateway-lanes-prod/shared/artifacts",
+                "Destination": "/shared/artifacts",
+                "Mode": "",
+                "RW": true,
+                "Propagation": "rprivate"
+            },
+            {
+                "Type": "bind",
+                "Source": "/srv/openclaw/data/gateway-lanes-prod/shared/bin/clawtop",
+                "Destination": "/usr/local/bin/clawtop",
+                "Mode": "",
+                "RW": false,
+                "Propagation": "rprivate"
+            },
+            {
+                "Type": "bind",
+                "Source": "/srv/openclaw/data/gateway-lanes-prod/shared/task-inputs",
+                "Destination": "/shared/task-inputs",
+                "Mode": "",
+                "RW": false,
+                "Propagation": "rprivate"
+            },
+            {
+                "Type": "bind",
+                "Source": "/srv/openclaw/data/gateway-lanes-prod/shared/task-results",
+                "Destination": "/shared/task-results",
+                "Mode": "",
+                "RW": true,
+                "Propagation": "rprivate"
+            }
+        ],
+        "Config": {
+            "Hostname": "2b57aa06b6af",
+            "Domainname": "",
+            "User": "node",
+            "AttachStdin": false,
+            "AttachStdout": false,
+            "AttachStderr": false,
+            "Tty": false,
+            "OpenStdin": false,
+            "StdinOnce": false,
+            "Env": [
+                "OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=1",
+                "OPENCLAW_CONFIG_PATH=/home/openclaw/config/openclaw.json",
+                "OPENCLAW_GATEWAY_PORT=18789",
+                "OPENCLAW_GATEWAY_TOKEN_FILE=/run/secrets/gateway_router_token",
+                "OPENCLAW_STATE_DIR=/home/openclaw/.openclaw",
+                "PATH=/home/node/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "NODE_VERSION=24.19.0",
+                "YARN_VERSION=1.22.22",
+                "COREPACK_HOME=/usr/local/share/corepack",
+                "PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright",
+                "NODE_ENV=production"
+            ],
+            "Cmd": [
+                "sh",
+                "-lc",
+                "export OPENCLAW_GATEWAY_TOKEN=$(cat /run/secrets/gateway_router_token); exec openclaw gateway --port 18789"
+            ],
+            "Healthcheck": {
+                "Test": [
+                    "CMD",
+                    "node",
+                    "dist/docker-healthcheck.js"
+                ],
+                "Interval": 180000000000,
+                "Timeout": 10000000000,
+                "StartPeriod": 15000000000,
+                "Retries": 3
+            },
+            "Image": "local/openclaw-gateway:2026.8.1-msteams-router-pr2-startup-migration-205be517344-20260914T221000Z",
+            "Volumes": null,
+            "WorkingDir": "/app",
+            "Entrypoint": [
+                "tini",
+                "-s",
+                "--"
+            ],
+            "Labels": {
+                "com.docker.stack.namespace": "openclaw-gateway-lanes-prod-swarm",
+                "com.docker.swarm.node.id": "vgld72n6a4xwy4wns4qbw40cp",
+                "com.docker.swarm.service.id": "p646fsv4tgokdengbfagehgbu",
+                "com.docker.swarm.service.name": "openclaw-gateway-lanes-prod-swarm_gateway-router",
+                "com.docker.swarm.task": "",
+                "com.docker.swarm.task.id": "km20znnzs2064p8ahjzljbju3",
+                "com.docker.swarm.task.name": "openclaw-gateway-lanes-prod-swarm_gateway-router.1.km20znnzs2064p8ahjzljbju3",
+                "org.openclaw.rollout": "pr2-router-startup-migration",
+                "org.openclaw.source.commit": "205be517344e0d87c3bc81d120d37043afa1e6a0",
+                "org.openclaw.source.ref": "feature/msteams-sender-aware-routing",
+                "org.opencontainers.image.base.digest": "sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03",
+                "org.opencontainers.image.base.name": "docker.io/library/node:24-bookworm-slim",
+                "org.opencontainers.image.description": "OpenClaw gateway and CLI runtime container image",
+                "org.opencontainers.image.documentation": "https://docs.openclaw.ai/install/docker",
+                "org.opencontainers.image.licenses": "MIT",
+                "org.opencontainers.image.revision": "205be517344e0d87c3bc81d120d37043afa1e6a0",
+                "org.opencontainers.image.source": "https://github.com/openclaw/openclaw",
+                "org.opencontainers.image.title": "OpenClaw",
+                "org.opencontainers.image.url": "https://openclaw.ai"
+            }
+        },
+        "NetworkSettings": {
+            "SandboxID": "86e8664808a0a00f4a2c92a14b106957ee8da4d55c17543c961a84f7f9dccfc6",
+            "SandboxKey": "/var/run/docker/netns/86e8664808a0",
+            "Ports": {},
+            "Networks": {
+                "openclaw-gateway-lanes-prod-swarm_edge": {
+                    "IPAMConfig": {
+                        "IPv4Address": "172.30.2.75",
+                        "IPv6Address": ""
+                    },
+                    "Links": null,
+                    "Aliases": null,
+                    "DriverOpts": null,
+                    "GwPriority": 0,
+                    "NetworkID": "a3al0tn01v50qw6l379aj9ctt",
+                    "EndpointID": "54733d9458546c6d9c8fe1160950f7e538050d8fcb1e9001040051bee2081c6c",
+                    "Gateway": "",
+                    "IPAddress": "172.30.2.75",
+                    "MacAddress": "02:42:ac:1e:02:4b",
+                    "IPPrefixLen": 24,
+                    "IPv6Gateway": "",
+                    "GlobalIPv6Address": "",
+                    "GlobalIPv6PrefixLen": 0,
+                    "DNSNames": [
+                        "openclaw-gateway-lanes-prod-swarm_gateway-router.1.km20znnzs2064p8ahjzljbju3",
+                        "2b57aa06b6af"
+                    ]
+                },
+                "openclaw-gateway-lanes-prod-swarm_egress": {
+                    "IPAMConfig": {
+                        "IPv4Address": "172.30.1.58",
+                        "IPv6Address": ""
+                    },
+                    "Links": null,
+                    "Aliases": null,
+                    "DriverOpts": null,
+                    "GwPriority": 0,
+                    "NetworkID": "vgse17dze1erapqoruzf9zc3s",
+                    "EndpointID": "330b833d3a7dbb05d2e464f8878f8d2ac300587f804a9c299739229948df3547",
+                    "Gateway": "",
+                    "IPAddress": "172.30.1.58",
+                    "MacAddress": "02:42:ac:1e:01:3a",
+                    "IPPrefixLen": 24,
+                    "IPv6Gateway": "",
+                    "GlobalIPv6Address": "",
+                    "GlobalIPv6PrefixLen": 0,
+                    "DNSNames": [
+                        "openclaw-gateway-lanes-prod-swarm_gateway-router.1.km20znnzs2064p8ahjzljbju3",
+                        "2b57aa06b6af"
+                    ]
+                },
+                "openclaw-gateway-lanes-prod-swarm_gateway": {
+                    "IPAMConfig": {
+                        "IPv4Address": "172.30.5.75",
+                        "IPv6Address": ""
+                    },
+                    "Links": null,
+                    "Aliases": null,
+                    "DriverOpts": null,
+                    "GwPriority": 0,
+                    "NetworkID": "0p74bocv2pagpe75difz65zm6",
+                    "EndpointID": "26169f8729bac9f183db9eb1d73df5f597615ab8193945d28383f9623a00778d",
+                    "Gateway": "",
+                    "IPAddress": "172.30.5.75",
+                    "MacAddress": "02:42:ac:1e:05:4b",
+                    "IPPrefixLen": 24,
+                    "IPv6Gateway": "",
+                    "GlobalIPv6Address": "",
+                    "GlobalIPv6PrefixLen": 0,
+                    "DNSNames": [
+                        "openclaw-gateway-lanes-prod-swarm_gateway-router.1.km20znnzs2064p8ahjzljbju3",
+                        "2b57aa06b6af"
+                    ]
+                }
+            }
+        },
+        "ImageManifestDescriptor": {
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "digest": "sha256:d688eaf3c7e2fe72a1e619fdb7cbb795c0559caa0c21b5fffe0b8c38dacd4b33",
+            "size": 6743,
+            "platform": {
+                "architecture": "amd64",
+                "os": "linux"
+            }
+        }
+    }
+]

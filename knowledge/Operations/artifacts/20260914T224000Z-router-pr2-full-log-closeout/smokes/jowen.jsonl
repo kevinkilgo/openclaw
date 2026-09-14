@@ -1,0 +1,590 @@
+employee=jowen
+service=employee-agent-jowen_employee-agent-jowen
+container=4d16b1a273f4
+started=2026-09-14T22:40:24Z
+{
+  "runId": "3ae4dd37-18a8-45dd-b2e6-e41f51a05863",
+  "status": "ok",
+  "summary": "completed",
+  "result": {
+    "payloads": [
+      {
+        "text": "EMPLOYEE_READY_OK",
+        "mediaUrl": null
+      }
+    ],
+    "meta": {
+      "durationMs": 5874,
+      "agentMeta": {
+        "sessionId": "208d857f-2ebe-4520-9814-65b42f0f8de6",
+        "provider": "openai",
+        "model": "gpt-5.5",
+        "contextTokens": 258400,
+        "contextTokensSource": "runtime",
+        "agentHarnessId": "codex",
+        "usage": {
+          "input": 19836,
+          "output": 8,
+          "cacheRead": 2432,
+          "total": 22276
+        },
+        "lastCallUsage": {
+          "input": 19836,
+          "output": 8,
+          "cacheRead": 2432,
+          "cacheWrite": 0,
+          "contextUsage": {
+            "state": "available",
+            "promptTokens": 22268,
+            "totalTokens": 22276
+          },
+          "reasoningTokens": 0,
+          "total": 22276
+        },
+        "promptTokens": 22268,
+        "codeModeEngaged": false,
+        "costUsd": 0.100636,
+        "terminalReceipt": {
+          "runId": "3ae4dd37-18a8-45dd-b2e6-e41f51a05863",
+          "sessionId": "208d857f-2ebe-4520-9814-65b42f0f8de6",
+          "turnId": "01a0a214-3306-7060-8bf0-d9895f7c808e",
+          "requested": {
+            "provider": "openai",
+            "model": "gpt-5.5"
+          },
+          "effective": {
+            "provider": "openai",
+            "model": "gpt-5.5",
+            "responseModel": "gpt-5.5"
+          },
+          "successfulToolNames": [],
+          "rerouted": false
+        }
+      },
+      "aborted": false,
+      "systemPromptReport": {
+        "source": "run",
+        "generatedAt": 1789425627221,
+        "sessionId": "208d857f-2ebe-4520-9814-65b42f0f8de6",
+        "sessionKey": "agent:main:full-log-smoke-20260914t224000z-router-pr2-full-log-closeout-jowen",
+        "provider": "openai",
+        "model": "gpt-5.5",
+        "workspaceDir": "/home/openclaw/workspace",
+        "systemPrompt": {
+          "chars": 13993,
+          "projectContextChars": 0,
+          "nonProjectContextChars": 13993,
+          "hash": "b7da7273004eea7e393b31148c12d675c4c2bf8fa91f3e1dbe0323545db9d042"
+        },
+        "injectedWorkspaceFiles": [
+          {
+            "name": "AGENTS.md",
+            "path": "/home/openclaw/workspace/AGENTS.md",
+            "missing": false,
+            "rawChars": 8408,
+            "injectionStatus": "native_unverified",
+            "injectedChars": null,
+            "truncated": null
+          },
+          {
+            "name": "SOUL.md",
+            "path": "/home/openclaw/workspace/SOUL.md",
+            "missing": false,
+            "rawChars": 777,
+            "injectedChars": 777,
+            "truncated": false
+          },
+          {
+            "name": "IDENTITY.md",
+            "path": "/home/openclaw/workspace/IDENTITY.md",
+            "missing": false,
+            "rawChars": 440,
+            "injectedChars": 440,
+            "truncated": false
+          },
+          {
+            "name": "USER.md",
+            "path": "/home/openclaw/workspace/USER.md",
+            "missing": false,
+            "rawChars": 1863,
+            "injectedChars": 1863,
+            "truncated": false
+          },
+          {
+            "name": "MEMORY.md",
+            "path": "/home/openclaw/workspace/MEMORY.md",
+            "missing": false,
+            "rawChars": 7554,
+            "injectedChars": 0,
+            "truncated": false
+          }
+        ],
+        "skills": {
+          "promptChars": 5335,
+          "hash": "f1f0986735dd5f3551c215f0bcde05b0e757d2569b4adf071a324b96c258c0f2",
+          "entries": [
+            {
+              "name": "browser-automation",
+              "blockChars": 384
+            },
+            {
+              "name": "canvas",
+              "blockChars": 303
+            },
+            {
+              "name": "clawhub",
+              "blockChars": 316
+            },
+            {
+              "name": "diagram-maker",
+              "blockChars": 278
+            },
+            {
+              "name": "healthcheck",
+              "blockChars": 290
+            },
+            {
+              "name": "meme-maker",
+              "blockChars": 263
+            },
+            {
+              "name": "node-connect",
+              "blockChars": 347
+            },
+            {
+              "name": "node-inspect-debugger",
+              "blockChars": 289
+            },
+            {
+              "name": "notion",
+              "blockChars": 284
+            },
+            {
+              "name": "python-debugpy",
+              "blockChars": 277
+            },
+            {
+              "name": "skill-creator",
+              "blockChars": 296
+            },
+            {
+              "name": "spike",
+              "blockChars": 263
+            },
+            {
+              "name": "taskflow",
+              "blockChars": 293
+            },
+            {
+              "name": "taskflow-inbox-triage",
+              "blockChars": 303
+            },
+            {
+              "name": "third-party-api-smoke-integration",
+              "blockChars": 343
+            },
+            {
+              "name": "weather",
+              "blockChars": 301
+            }
+          ]
+        },
+        "tools": {
+          "listChars": 0,
+          "schemaChars": 7328,
+          "entries": [
+            {
+              "name": "agents_list",
+              "summaryChars": 116,
+              "summaryHash": "a86dafe00675913d8f07e9bac4c134435539c31e80cac7c431f879cc0285ab16",
+              "schemaChars": 76,
+              "schemaHash": "d746974fa9afd5e951f76f9af38954b0ad7f436f2120dc974da65e5ee39f856f",
+              "propertiesCount": 0
+            },
+            {
+              "name": "progress_card",
+              "summaryChars": 1057,
+              "summaryHash": "846c0095686b427523a290242733dcd4cf2017dd0a76caed3dbca57d589a6a45",
+              "schemaChars": 401,
+              "schemaHash": "4df2ff9b9fb69b792b92f3d1d67a295fc7061797e031a42793731348c50b29e2",
+              "propertiesCount": 2
+            },
+            {
+              "name": "sessions_spawn",
+              "summaryChars": 1523,
+              "summaryHash": "012bbf4d98b9f33d397c148657c864a77c425da0fea2de714b391e876163a0e6",
+              "schemaChars": 2634,
+              "schemaHash": "dc5d8ceee306bb070199b2211fa024e6f8e35a5322f170b93449ac9ea2e98f63",
+              "propertiesCount": 21
+            },
+            {
+              "name": "ask_user",
+              "summaryChars": 545,
+              "summaryHash": "c06ed7641e3297d440f4fd5b282c1b2ea5808fae1c51c5585c9938e9284c8d08",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "automations",
+              "summaryChars": 3556,
+              "summaryHash": "252bf466dff0ec4e878350efa5ab4f829520e56ba64a7f66cab75f3b466c37be",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "browser",
+              "summaryChars": 2823,
+              "summaryHash": "d859735ae78ea5b1208ed0f8fe9f8cf9bc757268bb6900ce3eeb68d38c040e56",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "canvas",
+              "summaryChars": 67,
+              "summaryHash": "1f9f9d063d5eeb9a4ccc1b0709fd2420b08092e771a18d1b5914f5db0b37e1cc",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "codex_plugins",
+              "summaryChars": 194,
+              "summaryHash": "13f6df4d28284f8b4b8af5b67f6de9fe6425636ae81fa0027feafc98c0150a10",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "conversations_list",
+              "summaryChars": 159,
+              "summaryHash": "527335ff7cc669a406a88dbb1ea150631cea16155fa517fc76c8be38f8285190",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "conversations_send",
+              "summaryChars": 152,
+              "summaryHash": "7031570c2ea879e8ebb39548c931374a864db8bfeb4d634de7d234a7f43fbbe3",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "conversations_turn",
+              "summaryChars": 190,
+              "summaryHash": "67bb15e899769e37e6d2ff596dba9c33ac6c828e12ef2903fc40fbf5df56aeb3",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "dashboard",
+              "summaryChars": 677,
+              "summaryHash": "9b0390e5a91778ce0f4581642730826d5cfcf2e1f015552084362dd087b1db8d",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "dir_fetch",
+              "summaryChars": 598,
+              "summaryHash": "3ca6152f2f0b6c6767f1d3679e71e5d4c938b7b9a7c0797334662f433d8e74ac",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "dir_list",
+              "summaryChars": 577,
+              "summaryHash": "5a8ac409eb0fd95f07f7a95246b01d86453ed33ab9e975c9030e841bd83b8334",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "file_fetch",
+              "summaryChars": 639,
+              "summaryHash": "56074a5ddb12cd8ac5801ad567f86613badf1a3484fbc8a6307033ed90742c44",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "file_write",
+              "summaryChars": 550,
+              "summaryHash": "a014f1e3cf507317ef3408d493922ddf306c5705c582f363d3a89627d64c6f34",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "gateway",
+              "summaryChars": 64,
+              "summaryHash": "697d9ea4286f122151f8229a3993655f456182c889e57e1aa28b3cdd60f19d85",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "gateway_exec",
+              "summaryChars": 367,
+              "summaryHash": "dad3f3073a59cd44ffd60442c936b871796bae946a652776a130fffc89dcf755",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "gateway_process",
+              "summaryChars": 255,
+              "summaryHash": "1ca21d50545f267b8376a287e8f6f9491ca4510c330822c7a190c80f837b23ca",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "image_generate",
+              "summaryChars": 375,
+              "summaryHash": "02e1424e4a119f3cd75f2b6776fce1ee0ddf69a3c467010247561772f28029f2",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "intent",
+              "summaryChars": 274,
+              "summaryHash": "1c90cad432f12ecc9fed1c443ba28a6388c9b20beb871aa470d9c1779c16976c",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "memory_get",
+              "summaryChars": 239,
+              "summaryHash": "bff1141a3da31a345c550337417efc9ace4da2909004606c727c59ca1a294495",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "memory_search",
+              "summaryChars": 605,
+              "summaryHash": "0f918d28864d3682ae77731f149273997c84773592a466b18c7cd0121b599a05",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "message",
+              "summaryChars": 53,
+              "summaryHash": "de851751578c63168fcb3f122b2afd4511a1023efc6c24096319930c1fead830",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "mobile_ui",
+              "summaryChars": 469,
+              "summaryHash": "bf1837a0eb9c82b6ac1da6394111f4786423d2a19831ec69acbd0a1466822810",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "node_exec",
+              "summaryChars": 345,
+              "summaryHash": "e533ecf8ff792727bccac0189db94ecf0b5f2ffbdd0825b813695f8bea018687",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "node_inference",
+              "summaryChars": 206,
+              "summaryHash": "49c5e7e56c65dee8e708065c58240d64d8067dc07d9d13597890ecb5388ac88d",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "nodes",
+              "summaryChars": 516,
+              "summaryHash": "0ddada295a8604352fb098058e6462eda948afaac4fa62cabdaba0a5d2258ed7",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "openclaw",
+              "summaryChars": 126,
+              "summaryHash": "4b98f4853ed9513c0ae1f3408f141a4934e68b1a957ab3ebcacf7c4aa4781f78",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "pdf",
+              "summaryChars": 234,
+              "summaryHash": "1b50e3a5a4341c59ce7d09e6fd8876b32597f85830ac8a26c4f405a7a0eea9e3",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "portal",
+              "summaryChars": 452,
+              "summaryHash": "1e3994e367a669538fefacade753495d004b560e2b596fb7e60458acac645bab",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "session_status",
+              "summaryChars": 192,
+              "summaryHash": "23343479c1bf552695627bd580795ca22cdc1020232f6984bf0cad5557f74dbd",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "sessions",
+              "summaryChars": 366,
+              "summaryHash": "6b77afec2124edbe020f0eafc898b9194422d377e0bf9461b50660bd258de762",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "sessions_history",
+              "summaryChars": 152,
+              "summaryHash": "e60a4b2fbfba94ba8773cbfb92db5c36fa8bdd9d425869057c8b0e11b92313b2",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "sessions_list",
+              "summaryChars": 248,
+              "summaryHash": "08f1e7b8d09976fdb235e24357287939ebf8729ce34abc2cb6d8096e8fbd5d0f",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "sessions_search",
+              "summaryChars": 178,
+              "summaryHash": "9b730e613c04139f2cbb974d73ec89c191d1be42ff4a2e7181a38e11f022a907",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "sessions_send",
+              "summaryChars": 619,
+              "summaryHash": "e95357292b0c7e5131eca26a9ed65732755cf5f83be1d8da98e5f5dce8e8c017",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "skill_workshop",
+              "summaryChars": 1938,
+              "summaryHash": "849186b2eb7374783988759c25daa4316b825a54c4a5db63f27cc4dbb0a76847",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "subagents",
+              "summaryChars": 68,
+              "summaryHash": "7143cfe20a0f143f0559924a80735a7efa2e52e60997d835ee2bff7e8c5e050e",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "terminal",
+              "summaryChars": 177,
+              "summaryHash": "b087ad4aa73ac52fa2f04e8d8e72a90cf01393105ff06d76a55778dfcdfd0630",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "transcripts",
+              "summaryChars": 100,
+              "summaryHash": "b11259630721b3c467e2982f6ab625fc4d06839183902faf0ccf01f60f55dcb7",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "tts",
+              "summaryChars": 245,
+              "summaryHash": "841f7db9ad3ece79d54c59de7395e7a8591d24327be97750c4d76c1bff5a107a",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "web_fetch",
+              "summaryChars": 78,
+              "summaryHash": "616ac805dfdeaeadbb5e03504e84d52b01ecaa88c7e7100fa4c06eca8eb6195f",
+              "schemaChars": 0,
+              "schemaHash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+              "propertiesCount": null
+            },
+            {
+              "name": "computer",
+              "summaryChars": 199,
+              "summaryHash": "243e0511563283a69bb8ebf632a7260091eff12781562bb994c193a13e6207cf",
+              "schemaChars": 3958,
+              "schemaHash": "bd033cc41543f372a77e363992f1a366b3dba94ae5214c516b1aa7479374067d",
+              "propertiesCount": 52
+            },
+            {
+              "name": "sessions_yield",
+              "summaryChars": 149,
+              "summaryHash": "54c3073a05fc6c0d2cfaec6a7aa0d9ed732a932a80f760e06083535584cca63e",
+              "schemaChars": 259,
+              "schemaHash": "e953359a7fcb4fe1d0bda053c1ebe3a4cce85300c686443c9a3088957ad6c03f",
+              "propertiesCount": 2
+            }
+          ]
+        }
+      },
+      "finalAssistantVisibleText": "EMPLOYEE_READY_OK",
+      "finalAssistantRawText": "EMPLOYEE_READY_OK",
+      "replayInvalid": false,
+      "livenessState": "working",
+      "stopReason": "stop",
+      "executionTrace": {
+        "winnerProvider": "openai",
+        "winnerModel": "gpt-5.5",
+        "attempts": [
+          {
+            "provider": "openai",
+            "model": "gpt-5.5",
+            "result": "success",
+            "stage": "assistant"
+          }
+        ],
+        "fallbackUsed": false,
+        "runner": "embedded"
+      },
+      "requestShaping": {
+        "authMode": "auth-profile",
+        "thinking": "medium"
+      },
+      "completion": {
+        "stopReason": "stop",
+        "finishReason": "stop"
+      }
+    }
+  }
+}
+exit=0
+finished=2026-09-14T22:40:32Z

@@ -1,0 +1,6 @@
+kkilgo smoke_contains_ready_ok=0
+jowen smoke_contains_ready_ok=0
+rstephens smoke_contains_ready_ok=0
+hdadabhoy smoke_contains_ready_ok=0
+babbey smoke_contains_ready_ok=0
+dmathis smoke_contains_ready_ok=0

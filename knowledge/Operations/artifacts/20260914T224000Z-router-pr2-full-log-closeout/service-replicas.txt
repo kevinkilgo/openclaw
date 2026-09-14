@@ -1,0 +1,7 @@
+employee-agent-babbey_employee-agent-babbey 1/1 local/openclaw-gateway:2026.8.1-msteams-employee-device-code-hotpatch-20260907a
+employee-agent-dmathis_employee-agent-dmathis 1/1 local/openclaw-gateway:2026.8.1-msteams-employee-device-code-hotpatch-20260907a
+employee-agent-hdadabhoy_employee-agent-hdadabhoy 1/1 local/openclaw-gateway:2026.8.1-msteams-employee-device-code-hotpatch-20260907a
+employee-agent-jowen_employee-agent-jowen 1/1 local/openclaw-gateway:2026.8.1-msteams-employee-device-code-hotpatch-20260907a
+employee-agent-kkilgo_employee-agent-kkilgo 1/1 local/openclaw-gateway:2026.8.1-msteams-employee-device-code-hotpatch-20260907a
+employee-agent-rstephens_employee-agent-rstephens 1/1 local/openclaw-gateway:2026.8.1-msteams-employee-device-code-hotpatch-20260907a
+openclaw-gateway-lanes-prod-swarm_gateway-router 1/1 local/openclaw-gateway:2026.8.1-msteams-router-pr2-startup-migration-205be517344-20260914T221000Z
