@@ -54,6 +54,13 @@ type GatewayAgentWaitResult = {
 
 const EMPLOYEE_CONTAINER_SESSION_CLAIM_RETRY_ATTEMPTS = 3;
 const EMPLOYEE_CONTAINER_SESSION_CLAIM_RETRY_DELAY_MS = 1_000;
+function employeeContainerGatewayClientOptions() {
+  return {
+    clientName: "gateway-client" as const,
+    mode: "backend" as const,
+    scopes: ["operator.write"],
+  };
+}
 
 type TeamsLoginDeviceCode = {
   title: string;
@@ -347,7 +354,7 @@ async function dispatchViaEmployeeContainer(params: {
           timeout: Math.ceil(waitTimeoutMs / 1000),
           sourceReplyDeliveryMode: "automatic",
         },
-        { scopes: ["operator.write"], deviceIdentity: null },
+        employeeContainerGatewayClientOptions(),
       )) as GatewayAgentAccepted;
       if (!accepted.runId) {
         throw new Error("employee container agent run did not return a runId");
@@ -356,7 +363,7 @@ async function dispatchViaEmployeeContainer(params: {
         "agent.wait",
         { url, token, timeout: String(waitTimeoutMs + 10_000) },
         { runId: accepted.runId, timeoutMs: waitTimeoutMs },
-        { scopes: ["operator.write"], deviceIdentity: null },
+        employeeContainerGatewayClientOptions(),
       )) as GatewayAgentWaitResult;
       if (waitResult.status === "ok") {
         break;
