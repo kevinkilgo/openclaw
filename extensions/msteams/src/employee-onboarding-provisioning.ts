@@ -87,6 +87,12 @@ export type MSTeamsEmployeeOnboardingProvisioningPlan = {
         autoRepair: "add-missing-empty-plugin-entries";
         explicitDisablePolicy: "block-and-report";
       };
+      salesforceConnector: {
+        requiredMcpServerId: typeof MSTEAMS_EMPLOYEE_SALESFORCE_MCP_SERVER_ID;
+        requiredToolAllowEntries: MSTeamsEmployeeSalesforceToolAllowEntry[];
+        autoRepair: "add-missing-mcp-server-and-tool-allow-entries";
+        explicitDisablePolicy: "block-and-report";
+      };
     };
   };
   commands: {
@@ -181,6 +187,36 @@ export type MSTeamsEmployeeM365PromptSurfaceRepairResult<TConfig> = {
   sideEffects: [] | ["employee-config-prompt-surface-repair"];
 };
 
+export const MSTEAMS_EMPLOYEE_SALESFORCE_MCP_SERVER_ID = "salesforce" as const;
+
+export const REQUIRED_MSTEAMS_EMPLOYEE_SALESFORCE_TOOL_ALLOW_ENTRIES = [
+  "bundle-mcp",
+  "salesforce__*",
+] as const;
+
+export type MSTeamsEmployeeSalesforceToolAllowEntry =
+  (typeof REQUIRED_MSTEAMS_EMPLOYEE_SALESFORCE_TOOL_ALLOW_ENTRIES)[number];
+
+export type MSTeamsEmployeeSalesforceConnectorStatus = {
+  status: "ready" | "repairable" | "blocked";
+  requiredMcpServerId: typeof MSTEAMS_EMPLOYEE_SALESFORCE_MCP_SERVER_ID;
+  mcpServerPresent: boolean;
+  mcpServerExplicitlyDisabled: boolean;
+  launcherShapeReady: boolean;
+  requiredToolAllowEntries: MSTeamsEmployeeSalesforceToolAllowEntry[];
+  presentToolAllowEntries: MSTeamsEmployeeSalesforceToolAllowEntry[];
+  missingToolAllowEntries: MSTeamsEmployeeSalesforceToolAllowEntry[];
+  messages: string[];
+};
+
+export type MSTeamsEmployeeSalesforceConnectorRepairResult<TConfig> = {
+  config: TConfig;
+  status: MSTeamsEmployeeSalesforceConnectorStatus;
+  addedMcpServer: boolean;
+  addedToolAllowEntries: MSTeamsEmployeeSalesforceToolAllowEntry[];
+  sideEffects: [] | ["employee-config-salesforce-connector-repair"];
+};
+
 export type MSTeamsEmployeeOnboardingExecutionReadinessProof = {
   dryRun: true;
   status: "ready" | "blocked";
@@ -210,6 +246,12 @@ export type MSTeamsEmployeeOnboardingExecutionReadinessProof = {
   configGuard: {
     m365PromptSurface: {
       requiredPluginEntries: MSTeamsEmployeeM365PromptSurfacePluginId[];
+      explicitDisablePolicy: "block-and-report";
+      passed: true;
+    };
+    salesforceConnector: {
+      requiredMcpServerId: typeof MSTEAMS_EMPLOYEE_SALESFORCE_MCP_SERVER_ID;
+      requiredToolAllowEntries: MSTeamsEmployeeSalesforceToolAllowEntry[];
       explicitDisablePolicy: "block-and-report";
       passed: true;
     };
@@ -349,6 +391,12 @@ const EMPLOYEE_M365_PROMPT_SURFACE_CONFIG_GUARD = {
     autoRepair: "add-missing-empty-plugin-entries",
     explicitDisablePolicy: "block-and-report",
   },
+  salesforceConnector: {
+    requiredMcpServerId: MSTEAMS_EMPLOYEE_SALESFORCE_MCP_SERVER_ID,
+    requiredToolAllowEntries: [...REQUIRED_MSTEAMS_EMPLOYEE_SALESFORCE_TOOL_ALLOW_ENTRIES],
+    autoRepair: "add-missing-mcp-server-and-tool-allow-entries",
+    explicitDisablePolicy: "block-and-report",
+  },
 } satisfies MSTeamsEmployeeOnboardingProvisioningPlan["proposed"]["configGuard"];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -360,6 +408,32 @@ function configPluginEntries(config: unknown): Record<string, unknown> {
     return {};
   }
   return config.plugins.entries;
+}
+
+function configMcpServers(config: unknown): Record<string, unknown> {
+  if (!isRecord(config) || !isRecord(config.mcp) || !isRecord(config.mcp.servers)) {
+    return {};
+  }
+  return config.mcp.servers;
+}
+
+function configMainAgentTools(config: unknown): Record<string, unknown> {
+  if (
+    !isRecord(config) ||
+    !isRecord(config.agents) ||
+    !isRecord(config.agents.entries) ||
+    !isRecord(config.agents.entries.main) ||
+    !isRecord(config.agents.entries.main.tools)
+  ) {
+    return {};
+  }
+  return config.agents.entries.main.tools;
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
 }
 
 export function diagnoseMSTeamsEmployeeM365PromptSurfaceConfig(
@@ -445,6 +519,160 @@ export function ensureMSTeamsEmployeeM365PromptSurfaceConfig<
     status: diagnoseMSTeamsEmployeeM365PromptSurfaceConfig(repairedConfig),
     addedPluginEntries: status.missingPluginEntries,
     sideEffects: ["employee-config-prompt-surface-repair"],
+  };
+}
+
+function createDefaultMSTeamsEmployeeSalesforceMcpServerConfig(): Record<string, unknown> {
+  return {
+    command: "npx",
+    args: [
+      "-y",
+      "-p",
+      "@salesforce/mcp@0.30.13",
+      "-p",
+      "eslint@9.39.1",
+      "-p",
+      "@salesforce-ux/eslint-plugin-slds@1.2.1",
+      "sf-mcp-server",
+      "--orgs",
+      "DEFAULT_TARGET_ORG",
+      "--toolsets",
+      "data",
+      "--tools",
+      "run_soql_query",
+      "--no-telemetry",
+    ],
+    connectionTimeoutMs: 90_000,
+    requestTimeoutMs: 120_000,
+    env: {
+      npm_config_cache: "/home/node/.npm-salesforce",
+      SF_DISABLE_TELEMETRY: "true",
+    },
+  };
+}
+
+function isApprovedMSTeamsEmployeeSalesforceMcpLauncher(entry: unknown): boolean {
+  if (!isRecord(entry)) {
+    return false;
+  }
+  const args = stringArray(entry.args);
+  const env = isRecord(entry.env) ? entry.env : {};
+  return (
+    entry.command === "npx" &&
+    args.some((arg) => arg.startsWith("@salesforce/mcp@")) &&
+    args.includes("sf-mcp-server") &&
+    args.includes("--orgs") &&
+    args.includes("DEFAULT_TARGET_ORG") &&
+    args.includes("--no-telemetry") &&
+    typeof entry.connectionTimeoutMs === "number" &&
+    entry.connectionTimeoutMs >= 60_000 &&
+    typeof entry.requestTimeoutMs === "number" &&
+    entry.requestTimeoutMs >= 60_000 &&
+    env.SF_DISABLE_TELEMETRY === "true" &&
+    typeof env.npm_config_cache === "string" &&
+    env.npm_config_cache.trim().length > 0
+  );
+}
+
+export function diagnoseMSTeamsEmployeeSalesforceConnectorConfig(
+  config: unknown,
+): MSTeamsEmployeeSalesforceConnectorStatus {
+  const servers = configMcpServers(config);
+  const server = servers[MSTEAMS_EMPLOYEE_SALESFORCE_MCP_SERVER_ID];
+  const tools = configMainAgentTools(config);
+  const alsoAllow = stringArray(tools.alsoAllow);
+  const presentToolAllowEntries = REQUIRED_MSTEAMS_EMPLOYEE_SALESFORCE_TOOL_ALLOW_ENTRIES.filter(
+    (entry) => alsoAllow.includes(entry),
+  );
+  const missingToolAllowEntries = REQUIRED_MSTEAMS_EMPLOYEE_SALESFORCE_TOOL_ALLOW_ENTRIES.filter(
+    (entry) => !alsoAllow.includes(entry),
+  );
+  const mcpServerPresent = isRecord(server);
+  const mcpServerExplicitlyDisabled = isRecord(server) && server.enabled === false;
+  const launcherShapeReady = isApprovedMSTeamsEmployeeSalesforceMcpLauncher(server);
+  const messages = [
+    ...(!mcpServerPresent ? ["Missing Salesforce MCP server config."] : []),
+    ...(mcpServerExplicitlyDisabled ? ["Salesforce MCP server is explicitly disabled."] : []),
+    ...(mcpServerPresent && !mcpServerExplicitlyDisabled && !launcherShapeReady
+      ? ["Salesforce MCP server launcher shape is not the approved employee onboarding shape."]
+      : []),
+    ...(missingToolAllowEntries.length > 0
+      ? [`Missing Salesforce tool allow entries: ${missingToolAllowEntries.join(", ")}`]
+      : []),
+  ];
+
+  return {
+    status: mcpServerExplicitlyDisabled
+      ? "blocked"
+      : !mcpServerPresent || !launcherShapeReady || missingToolAllowEntries.length > 0
+        ? "repairable"
+        : "ready",
+    requiredMcpServerId: MSTEAMS_EMPLOYEE_SALESFORCE_MCP_SERVER_ID,
+    mcpServerPresent,
+    mcpServerExplicitlyDisabled,
+    launcherShapeReady,
+    requiredToolAllowEntries: [...REQUIRED_MSTEAMS_EMPLOYEE_SALESFORCE_TOOL_ALLOW_ENTRIES],
+    presentToolAllowEntries,
+    missingToolAllowEntries,
+    messages: messages.length > 0 ? messages : ["Salesforce MCP connector config is ready."],
+  };
+}
+
+export function ensureMSTeamsEmployeeSalesforceConnectorConfig<
+  TConfig extends Record<string, unknown>,
+>(config: TConfig): MSTeamsEmployeeSalesforceConnectorRepairResult<TConfig> {
+  const status = diagnoseMSTeamsEmployeeSalesforceConnectorConfig(config);
+  if (status.status !== "repairable") {
+    return {
+      config,
+      status,
+      addedMcpServer: false,
+      addedToolAllowEntries: [],
+      sideEffects: [],
+    };
+  }
+
+  const mcp = isRecord(config.mcp) ? config.mcp : {};
+  const servers = isRecord(mcp.servers) ? mcp.servers : {};
+  const agents = isRecord(config.agents) ? config.agents : {};
+  const entries = isRecord(agents.entries) ? agents.entries : {};
+  const main = isRecord(entries.main) ? entries.main : {};
+  const tools = isRecord(main.tools) ? main.tools : {};
+  const alsoAllow = stringArray(tools.alsoAllow);
+  const addedToolAllowEntries = status.missingToolAllowEntries;
+  const repairedConfig = {
+    ...config,
+    mcp: {
+      ...mcp,
+      servers: {
+        ...servers,
+        [MSTEAMS_EMPLOYEE_SALESFORCE_MCP_SERVER_ID]: status.launcherShapeReady
+          ? servers[MSTEAMS_EMPLOYEE_SALESFORCE_MCP_SERVER_ID]
+          : createDefaultMSTeamsEmployeeSalesforceMcpServerConfig(),
+      },
+    },
+    agents: {
+      ...agents,
+      entries: {
+        ...entries,
+        main: {
+          ...main,
+          tools: {
+            ...tools,
+            alsoAllow: [...alsoAllow, ...addedToolAllowEntries],
+          },
+        },
+      },
+    },
+  };
+
+  return {
+    // SAFETY: The repair preserves unknown config fields and only fills the Salesforce MCP server and main-agent tool allow entries.
+    config: repairedConfig as TConfig,
+    status: diagnoseMSTeamsEmployeeSalesforceConnectorConfig(repairedConfig),
+    addedMcpServer: !status.mcpServerPresent || !status.launcherShapeReady,
+    addedToolAllowEntries,
+    sideEffects: ["employee-config-salesforce-connector-repair"],
   };
 }
 
@@ -760,6 +988,7 @@ export function createMSTeamsEmployeeOnboardingProvisioningDryRun(params: {
       "employee BWS token sees the employee project and shared connector project required for its scope",
       "shared Salesforce and Krisp connector SecretRefs resolve from BWS without exposing values",
       "employee config includes device-pair and microsoft prompt-surface plugin entries for secure M365 auth handoff",
+      "employee config includes Salesforce MCP server and salesforce tool allow entries before Salesforce is considered ready",
       "employee-agent endpoint ports remain unpublished",
       "new Teams direct peer routes to the new employee agent",
       "Kevin Teams direct peer still routes to kevin-k",
@@ -914,11 +1143,18 @@ export function createMSTeamsEmployeeOnboardingExecutionReadinessProof(params: {
       "employee BWS project access proof succeeds from inside the container",
       "shared connector SecretRefs resolve from BWS without value exposure",
       "employee config prompt-surface guard passes before M365 auth is considered ready",
+      "employee Salesforce connector guard passes before Salesforce is considered ready",
       "production health validation remains green",
     ],
     configGuard: {
       m365PromptSurface: {
         requiredPluginEntries: [...REQUIRED_MSTEAMS_EMPLOYEE_M365_PROMPT_SURFACE_PLUGIN_IDS],
+        explicitDisablePolicy: "block-and-report",
+        passed: true,
+      },
+      salesforceConnector: {
+        requiredMcpServerId: MSTEAMS_EMPLOYEE_SALESFORCE_MCP_SERVER_ID,
+        requiredToolAllowEntries: [...REQUIRED_MSTEAMS_EMPLOYEE_SALESFORCE_TOOL_ALLOW_ENTRIES],
         explicitDisablePolicy: "block-and-report",
         passed: true,
       },
@@ -936,6 +1172,7 @@ export function createMSTeamsEmployeeOnboardingExecutionReadinessProof(params: {
         `employee BWS token secret reference ${params.plan.proposed.bws.tokenSecretRef}`,
         `read access to shared connector project ${params.plan.proposed.bws.sharedConnectorProjectName}`,
         "employee config prompt-surface guard for secure M365 auth handoff",
+        "employee Salesforce connector guard for MCP server and tool policy exposure",
         "one exact Teams direct-peer route binding",
       ],
       rollbackProof: [

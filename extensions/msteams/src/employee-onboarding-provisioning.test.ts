@@ -7,7 +7,9 @@ import {
   createMSTeamsEmployeeOnboardingAdminTransition,
   createMSTeamsEmployeeOnboardingAdminDryRun,
   diagnoseMSTeamsEmployeeM365PromptSurfaceConfig,
+  diagnoseMSTeamsEmployeeSalesforceConnectorConfig,
   ensureMSTeamsEmployeeM365PromptSurfaceConfig,
+  ensureMSTeamsEmployeeSalesforceConnectorConfig,
   redactMSTeamsEmployeeOnboardingExecutionReadinessProof,
   redactMSTeamsEmployeeOnboardingProvisioningDryRun,
   renderMSTeamsEmployeeOnboardingProvisioningStack,
@@ -138,6 +140,12 @@ describe("msteams employee onboarding provisioning dry run", () => {
             autoRepair: "add-missing-empty-plugin-entries",
             explicitDisablePolicy: "block-and-report",
           },
+          salesforceConnector: {
+            requiredMcpServerId: "salesforce",
+            requiredToolAllowEntries: ["bundle-mcp", "salesforce__*"],
+            autoRepair: "add-missing-mcp-server-and-tool-allow-entries",
+            explicitDisablePolicy: "block-and-report",
+          },
         },
       },
     });
@@ -154,6 +162,9 @@ describe("msteams employee onboarding provisioning dry run", () => {
     );
     expect(dryRun.validation).toContain(
       "employee config includes device-pair and microsoft prompt-surface plugin entries for secure M365 auth handoff",
+    );
+    expect(dryRun.validation).toContain(
+      "employee config includes Salesforce MCP server and salesforce tool allow entries before Salesforce is considered ready",
     );
   });
 
@@ -225,6 +236,102 @@ describe("msteams employee onboarding provisioning dry run", () => {
       sideEffects: [],
     });
     expect(repaired.config.plugins.entries.microsoft).toEqual({ enabled: false });
+  });
+
+  it("repairs missing Salesforce MCP server and tool exposure without touching secrets", () => {
+    const config = {
+      plugins: {
+        entries: {
+          codex: { enabled: true },
+          openai: { enabled: true },
+        },
+      },
+      agents: {
+        entries: {
+          main: {
+            tools: {
+              alsoAllow: ["read"],
+            },
+          },
+        },
+      },
+      secrets: {
+        providers: {
+          bws: { source: "exec" },
+        },
+      },
+    };
+
+    expect(diagnoseMSTeamsEmployeeSalesforceConnectorConfig(config)).toMatchObject({
+      status: "repairable",
+      requiredMcpServerId: "salesforce",
+      mcpServerPresent: false,
+      missingToolAllowEntries: ["bundle-mcp", "salesforce__*"],
+    });
+
+    const repaired = ensureMSTeamsEmployeeSalesforceConnectorConfig(config);
+
+    expect(repaired).toMatchObject({
+      status: {
+        status: "ready",
+        requiredMcpServerId: "salesforce",
+        mcpServerPresent: true,
+        missingToolAllowEntries: [],
+      },
+      addedMcpServer: true,
+      addedToolAllowEntries: ["bundle-mcp", "salesforce__*"],
+      sideEffects: ["employee-config-salesforce-connector-repair"],
+    });
+    expect(repaired.config.mcp.servers.salesforce).toMatchObject({
+      command: "npx",
+      connectionTimeoutMs: 90_000,
+      requestTimeoutMs: 120_000,
+      env: {
+        SF_DISABLE_TELEMETRY: "true",
+      },
+    });
+    expect(repaired.config.agents.entries.main.tools.alsoAllow).toEqual([
+      "read",
+      "bundle-mcp",
+      "salesforce__*",
+    ]);
+    expect(repaired.config.secrets).toBe(config.secrets);
+  });
+
+  it("blocks instead of overriding an explicitly disabled Salesforce MCP server", () => {
+    const config = {
+      mcp: {
+        servers: {
+          salesforce: {
+            enabled: false,
+          },
+        },
+      },
+      agents: {
+        entries: {
+          main: {
+            tools: {
+              alsoAllow: ["bundle-mcp"],
+            },
+          },
+        },
+      },
+    };
+
+    const repaired = ensureMSTeamsEmployeeSalesforceConnectorConfig(config);
+
+    expect(repaired).toMatchObject({
+      config,
+      status: {
+        status: "blocked",
+        mcpServerPresent: true,
+        mcpServerExplicitlyDisabled: true,
+      },
+      addedMcpServer: false,
+      addedToolAllowEntries: [],
+      sideEffects: [],
+    });
+    expect(repaired.config.mcp.servers.salesforce).toEqual({ enabled: false });
   });
 
   it("allows onboarding to bind a pre-created employee BWS project name", () => {
@@ -505,6 +612,12 @@ describe("msteams employee onboarding provisioning dry run", () => {
           explicitDisablePolicy: "block-and-report",
           passed: true,
         },
+        salesforceConnector: {
+          requiredMcpServerId: "salesforce",
+          requiredToolAllowEntries: ["bundle-mcp", "salesforce__*"],
+          explicitDisablePolicy: "block-and-report",
+          passed: true,
+        },
       },
       approvalPacket: {
         required: true,
@@ -520,6 +633,9 @@ describe("msteams employee onboarding provisioning dry run", () => {
     expect(proof.containerValidation).toContain(
       "employee config prompt-surface guard passes before M365 auth is considered ready",
     );
+    expect(proof.containerValidation).toContain(
+      "employee Salesforce connector guard passes before Salesforce is considered ready",
+    );
     expect(proof.approvalPacket.expectedChanges).toContain(
       "employee BWS project openclaw-second-pilot",
     );
@@ -528,6 +644,9 @@ describe("msteams employee onboarding provisioning dry run", () => {
     );
     expect(proof.approvalPacket.expectedChanges).toContain(
       "employee config prompt-surface guard for secure M365 auth handoff",
+    );
+    expect(proof.approvalPacket.expectedChanges).toContain(
+      "employee Salesforce connector guard for MCP server and tool policy exposure",
     );
     expect(proof.approvalPacket.rollbackProof).toContain(dryRun.commands.rollbackRoute);
     expect(proof.hostBackedMounts.required).toContain(

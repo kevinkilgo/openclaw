@@ -252,6 +252,7 @@ type MSTeamsEmployeeCommsFailureClassification =
   | "employee-run-timed-out"
   | "model-auth-failure"
   | "connector-tool-startup-timeout"
+  | "connector-readiness-failure"
   | "outbound-send-failed"
   | "recipient-visible-proof-missing"
   | "unknown";
@@ -277,6 +278,14 @@ function classifyEmployeeCommsFailure(error: unknown): MSTeamsEmployeeCommsFailu
   const text = formatUnknownError(error);
   if (/Missing bearer|401 Unauthorized|OpenAI auth/i.test(text)) {
     return "model-auth-failure";
+  }
+  if (
+    /DISABLED_BY_ADMIN|MCP_UNAVAILABLE|unavailable-org-config|disabled by admin|tool unavailable|not available|not enabled/i.test(
+      text,
+    ) &&
+    /Salesforce|connector|MCP|tool/i.test(text)
+  ) {
+    return "connector-readiness-failure";
   }
   if (/timed out|timeout|deadline/i.test(text)) {
     if (/MCP|connector|tool|server startup|startup/i.test(text)) {
@@ -311,6 +320,27 @@ function createEmployeeCommsTimeoutError(params: {
     `employee comms connector/tool startup timeout after ${params.waitTimeoutMs}ms routeAgentId=${
       params.routeAgentId
     } runId=${params.runId}${detail ? `: ${detail}` : ""}`,
+  );
+}
+
+function isEmployeeConnectorReadinessFailureReply(text: string): boolean {
+  return (
+    /DISABLED_BY_ADMIN|MCP_UNAVAILABLE|unavailable-org-config|disabled by admin|tool unavailable|not available|not enabled/i.test(
+      text,
+    ) && /Salesforce|connector|MCP|tool/i.test(text)
+  );
+}
+
+function createEmployeeConnectorReadinessError(params: {
+  routeAgentId: string;
+  runId?: string;
+  reply: string;
+}): Error {
+  const summary = sliceUtf16Safe(params.reply.replace(/\s+/gu, " ").trim(), 0, 240);
+  return new Error(
+    `employee connector readiness failure routeAgentId=${params.routeAgentId}${
+      params.runId ? ` runId=${params.runId}` : ""
+    }: ${summary}`,
   );
 }
 
@@ -590,6 +620,18 @@ async function dispatchViaEmployeeContainer(params: {
     trace.totalLatencyMs = nowMs() - startedAtMs;
     logEmployeeCommsTrace({ log: params.log, trace });
     return { kind: "completed", finalResponses: 0 };
+  }
+  if (isEmployeeConnectorReadinessFailureReply(text)) {
+    const err = createEmployeeConnectorReadinessError({
+      routeAgentId: params.routeAgentId,
+      runId: trace.employeeRunId,
+      reply: text,
+    });
+    trace.finalStatus = "failed";
+    trace.totalLatencyMs = nowMs() - startedAtMs;
+    trace.failureClassification = classifyEmployeeCommsFailure(err);
+    logEmployeeCommsTrace({ log: params.log, trace });
+    throw err;
   }
   const payload: ReplyPayload = { text };
   trace.outboundAttemptAtMs = nowMs();

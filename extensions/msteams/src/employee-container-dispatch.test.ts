@@ -284,6 +284,45 @@ describe("msteams employee container dispatch", () => {
     );
   });
 
+  it("treats employee Salesforce disabled replies as connector readiness failures", async () => {
+    gatewayRuntimeMockState.callGatewayFromCli.mockReset();
+    gatewayRuntimeMockState.callGatewayFromCli
+      .mockResolvedValueOnce({ runId: "run-salesforce-disabled" })
+      .mockResolvedValueOnce({
+        status: "ok",
+        terminalReply: {
+          text: "Salesforce is disabled by admin / not available. Ask an admin to enable it.",
+        },
+      });
+    const cfg = createDefaultWaitConfig();
+    const runtime = { error: vi.fn() } as unknown as RuntimeEnv;
+    const deps = createMSTeamsMessageHandlerDeps({ cfg, runtime });
+    const handler = createMSTeamsMessageHandler(deps);
+
+    await expect(handler(createContext())).rejects.toThrow(
+      "employee connector readiness failure routeAgentId=kkilgo",
+    );
+
+    expect(replyDispatcherMockState.deliver).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("Salesforce is disabled by admin"),
+      }),
+      expect.anything(),
+    );
+    expect(deps.log.info).toHaveBeenCalledWith(
+      "msteams employee comms e2e trace",
+      expect.objectContaining({
+        routeAgentId: "kkilgo",
+        employeeRunId: "run-salesforce-disabled",
+        finalStatus: "failed",
+        failureClassification: "connector-readiness-failure",
+      }),
+    );
+    expect(runtime.error).toHaveBeenCalledWith(
+      expect.stringContaining("employee connector readiness failure"),
+    );
+  });
+
   it("starts Codex device-code login when the employee container lacks OpenAI auth", async () => {
     gatewayRuntimeMockState.callGatewayFromCli.mockReset();
     gatewayRuntimeMockState.callGatewayFromCli
