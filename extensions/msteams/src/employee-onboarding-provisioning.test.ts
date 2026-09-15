@@ -111,6 +111,10 @@ describe("msteams employee onboarding provisioning dry run", () => {
           root: "/srv/openclaw/data/employee-agents/second-pilot",
           config: "/srv/openclaw/data/employee-agents/second-pilot/config",
           state: "/srv/openclaw/data/employee-agents/second-pilot/state/.openclaw",
+          salesforceSfCredentials:
+            "/srv/openclaw/data/employee-agents/second-pilot/state/.openclaw/credentials/salesforce/.sf",
+          salesforceSfdxCredentials:
+            "/srv/openclaw/data/employee-agents/second-pilot/state/.openclaw/credentials/salesforce/.sfdx",
           workspace: "/srv/openclaw/data/employee-agents/second-pilot/workspace",
           stackFile: "/srv/openclaw/stacks/employee-agent-second-pilot/stack.yml",
         },
@@ -580,6 +584,18 @@ describe("msteams employee onboarding provisioning dry run", () => {
       },
       {
         type: "bind",
+        source:
+          "/srv/openclaw/data/employee-agents/second-pilot/state/.openclaw/credentials/salesforce/.sf",
+        target: "/home/node/.sf",
+      },
+      {
+        type: "bind",
+        source:
+          "/srv/openclaw/data/employee-agents/second-pilot/state/.openclaw/credentials/salesforce/.sfdx",
+        target: "/home/node/.sfdx",
+      },
+      {
+        type: "bind",
         source: "/srv/openclaw/data/employee-agents/second-pilot/workspace",
         target: "/home/openclaw/workspace",
       },
@@ -619,6 +635,8 @@ describe("msteams employee onboarding provisioning dry run", () => {
           root: true,
           config: true,
           state: true,
+          salesforceSfCredentials: true,
+          salesforceSfdxCredentials: true,
           workspace: true,
           artifacts: false,
           taskInputs: false,
@@ -639,6 +657,8 @@ describe("msteams employee onboarding provisioning dry run", () => {
           root: "reuse-existing",
           config: "reuse-existing",
           state: "reuse-existing",
+          salesforceSfCredentials: "reuse-existing",
+          salesforceSfdxCredentials: "reuse-existing",
           workspace: "reuse-existing",
           artifacts: "create",
           taskInputs: "create",
@@ -687,6 +707,9 @@ describe("msteams employee onboarding provisioning dry run", () => {
     expect(proof.containerValidation).toContain(
       "employee Salesforce connector guard passes before Salesforce is considered ready",
     );
+    expect(proof.containerValidation).toContain(
+      "employee Salesforce credential bind mounts are present before Salesforce is considered ready",
+    );
     expect(proof.approvalPacket.expectedChanges).toContain(
       "employee BWS project openclaw-second-pilot",
     );
@@ -699,12 +722,27 @@ describe("msteams employee onboarding provisioning dry run", () => {
     expect(proof.approvalPacket.expectedChanges).toContain(
       "employee Salesforce connector guard for MCP server and tool policy exposure",
     );
+    expect(proof.approvalPacket.expectedChanges).toContain(
+      "employee Salesforce credential mounts for /home/node/.sf and /home/node/.sfdx",
+    );
     expect(proof.approvalPacket.rollbackProof).toContain(dryRun.commands.rollbackRoute);
     expect(proof.hostBackedMounts.required).toContain(
       "/srv/openclaw/data/employee-agents/second-pilot/secrets/employee_bws_access_token",
     );
+    expect(proof.hostBackedMounts.required).toContain(
+      "/srv/openclaw/data/employee-agents/second-pilot/state/.openclaw/credentials/salesforce/.sf",
+    );
+    expect(proof.hostBackedMounts.required).toContain(
+      "/srv/openclaw/data/employee-agents/second-pilot/state/.openclaw/credentials/salesforce/.sfdx",
+    );
     expect(proof.hostBackedMounts.mounted).toContain(
       "/srv/openclaw/data/employee-agents/second-pilot/secrets/employee_bws_access_token",
+    );
+    expect(proof.hostBackedMounts.mounted).toContain(
+      "/srv/openclaw/data/employee-agents/second-pilot/state/.openclaw/credentials/salesforce/.sf",
+    );
+    expect(proof.hostBackedMounts.mounted).toContain(
+      "/srv/openclaw/data/employee-agents/second-pilot/state/.openclaw/credentials/salesforce/.sfdx",
     );
   });
 

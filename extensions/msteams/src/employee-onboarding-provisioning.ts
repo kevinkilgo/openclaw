@@ -62,6 +62,8 @@ export type MSTeamsEmployeeOnboardingProvisioningPlan = {
       root: string;
       config: string;
       state: string;
+      salesforceSfCredentials: string;
+      salesforceSfdxCredentials: string;
       workspace: string;
       artifacts: string;
       taskInputs: string;
@@ -985,6 +987,8 @@ export function createMSTeamsEmployeeOnboardingProvisioningDryRun(params: {
         root,
         config: `${root}/config`,
         state: `${root}/state/.openclaw`,
+        salesforceSfCredentials: `${root}/state/.openclaw/credentials/salesforce/.sf`,
+        salesforceSfdxCredentials: `${root}/state/.openclaw/credentials/salesforce/.sfdx`,
         workspace: `${root}/workspace`,
         artifacts: `${root}/shared/artifacts`,
         taskInputs: `${root}/shared/task-inputs`,
@@ -1043,6 +1047,7 @@ export function createMSTeamsEmployeeOnboardingProvisioningDryRun(params: {
       "shared Salesforce and Krisp connector SecretRefs resolve from BWS without exposing values",
       "employee config includes device-pair and microsoft prompt-surface plugin entries for secure M365 auth handoff",
       "employee config includes Salesforce MCP server and salesforce tool allow entries before Salesforce is considered ready",
+      "employee stack includes Salesforce credential mounts for /home/node/.sf and /home/node/.sfdx before Salesforce is considered ready",
       "employee-agent endpoint ports remain unpublished",
       "new Teams direct peer routes to the new employee agent",
       "Kevin Teams direct peer still routes to kevin-k",
@@ -1094,6 +1099,16 @@ export function renderMSTeamsEmployeeOnboardingProvisioningStack(
       },
       {
         type: "bind",
+        source: paths.salesforceSfCredentials,
+        target: "/home/node/.sf",
+      },
+      {
+        type: "bind",
+        source: paths.salesforceSfdxCredentials,
+        target: "/home/node/.sfdx",
+      },
+      {
+        type: "bind",
         source: paths.workspace,
         target: "/home/openclaw/workspace",
       },
@@ -1125,6 +1140,8 @@ function scaffoldPathActions(params: {
     "root",
     "config",
     "state",
+    "salesforceSfCredentials",
+    "salesforceSfdxCredentials",
     "workspace",
     "artifacts",
     "taskInputs",
@@ -1148,6 +1165,8 @@ export function createMSTeamsEmployeeOnboardingExecutionReadinessProof(params: {
   const requiredMountSources = [
     params.plan.proposed.paths.config,
     params.plan.proposed.paths.state,
+    params.plan.proposed.paths.salesforceSfCredentials,
+    params.plan.proposed.paths.salesforceSfdxCredentials,
     params.plan.proposed.paths.workspace,
     params.plan.proposed.paths.artifacts,
     params.plan.proposed.paths.taskInputs,
@@ -1198,6 +1217,7 @@ export function createMSTeamsEmployeeOnboardingExecutionReadinessProof(params: {
       "shared connector SecretRefs resolve from BWS without value exposure",
       "employee config prompt-surface guard passes before M365 auth is considered ready",
       "employee Salesforce connector guard passes before Salesforce is considered ready",
+      "employee Salesforce credential bind mounts are present before Salesforce is considered ready",
       "production health validation remains green",
     ],
     configGuard: {
@@ -1227,6 +1247,7 @@ export function createMSTeamsEmployeeOnboardingExecutionReadinessProof(params: {
         `read access to shared connector project ${params.plan.proposed.bws.sharedConnectorProjectName}`,
         "employee config prompt-surface guard for secure M365 auth handoff",
         "employee Salesforce connector guard for MCP server and tool policy exposure",
+        "employee Salesforce credential mounts for /home/node/.sf and /home/node/.sfdx",
         "one exact Teams direct-peer route binding",
       ],
       rollbackProof: [
