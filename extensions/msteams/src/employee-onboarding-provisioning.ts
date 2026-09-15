@@ -81,6 +81,13 @@ export type MSTeamsEmployeeOnboardingProvisioningPlan = {
         };
       };
     };
+    configGuard: {
+      m365PromptSurface: {
+        requiredPluginEntries: MSTeamsEmployeeM365PromptSurfacePluginId[];
+        autoRepair: "add-missing-empty-plugin-entries";
+        explicitDisablePolicy: "block-and-report";
+      };
+    };
   };
   commands: {
     createAgent: string;
@@ -150,6 +157,30 @@ export type MSTeamsEmployeeOnboardingImageApprovalInput = {
   targetHostImages?: string[];
 };
 
+export const REQUIRED_MSTEAMS_EMPLOYEE_M365_PROMPT_SURFACE_PLUGIN_IDS = [
+  "device-pair",
+  "microsoft",
+] as const;
+
+export type MSTeamsEmployeeM365PromptSurfacePluginId =
+  (typeof REQUIRED_MSTEAMS_EMPLOYEE_M365_PROMPT_SURFACE_PLUGIN_IDS)[number];
+
+export type MSTeamsEmployeeM365PromptSurfaceStatus = {
+  status: "ready" | "repairable" | "blocked";
+  requiredPluginEntries: MSTeamsEmployeeM365PromptSurfacePluginId[];
+  presentPluginEntries: MSTeamsEmployeeM365PromptSurfacePluginId[];
+  missingPluginEntries: MSTeamsEmployeeM365PromptSurfacePluginId[];
+  explicitlyDisabledPluginEntries: MSTeamsEmployeeM365PromptSurfacePluginId[];
+  messages: string[];
+};
+
+export type MSTeamsEmployeeM365PromptSurfaceRepairResult<TConfig> = {
+  config: TConfig;
+  status: MSTeamsEmployeeM365PromptSurfaceStatus;
+  addedPluginEntries: MSTeamsEmployeeM365PromptSurfacePluginId[];
+  sideEffects: [] | ["employee-config-prompt-surface-repair"];
+};
+
 export type MSTeamsEmployeeOnboardingExecutionReadinessProof = {
   dryRun: true;
   status: "ready" | "blocked";
@@ -176,6 +207,13 @@ export type MSTeamsEmployeeOnboardingExecutionReadinessProof = {
   };
   routeValidation: string[];
   containerValidation: string[];
+  configGuard: {
+    m365PromptSurface: {
+      requiredPluginEntries: MSTeamsEmployeeM365PromptSurfacePluginId[];
+      explicitDisablePolicy: "block-and-report";
+      passed: true;
+    };
+  };
   approvalPacket: {
     required: true;
     summary: string;
@@ -304,6 +342,111 @@ const SHARED_CONNECTOR_SECRET_KEYS = [
   "openclaw/connectors/krisp/mcpServerConfig",
   "openclaw/connectors/krisp/serviceIdentity",
 ] as const;
+
+const EMPLOYEE_M365_PROMPT_SURFACE_CONFIG_GUARD = {
+  m365PromptSurface: {
+    requiredPluginEntries: [...REQUIRED_MSTEAMS_EMPLOYEE_M365_PROMPT_SURFACE_PLUGIN_IDS],
+    autoRepair: "add-missing-empty-plugin-entries",
+    explicitDisablePolicy: "block-and-report",
+  },
+} satisfies MSTeamsEmployeeOnboardingProvisioningPlan["proposed"]["configGuard"];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function configPluginEntries(config: unknown): Record<string, unknown> {
+  if (!isRecord(config) || !isRecord(config.plugins) || !isRecord(config.plugins.entries)) {
+    return {};
+  }
+  return config.plugins.entries;
+}
+
+export function diagnoseMSTeamsEmployeeM365PromptSurfaceConfig(
+  config: unknown,
+): MSTeamsEmployeeM365PromptSurfaceStatus {
+  const entries = configPluginEntries(config);
+  const presentPluginEntries: MSTeamsEmployeeM365PromptSurfacePluginId[] = [];
+  const missingPluginEntries: MSTeamsEmployeeM365PromptSurfacePluginId[] = [];
+  const explicitlyDisabledPluginEntries: MSTeamsEmployeeM365PromptSurfacePluginId[] = [];
+
+  for (const pluginId of REQUIRED_MSTEAMS_EMPLOYEE_M365_PROMPT_SURFACE_PLUGIN_IDS) {
+    const entry = entries[pluginId];
+    if (!isRecord(entry)) {
+      missingPluginEntries.push(pluginId);
+      continue;
+    }
+    if (entry.enabled === false) {
+      explicitlyDisabledPluginEntries.push(pluginId);
+      continue;
+    }
+    presentPluginEntries.push(pluginId);
+  }
+
+  const messages = [
+    ...(missingPluginEntries.length > 0
+      ? [`Missing secure M365 prompt-surface plugin entries: ${missingPluginEntries.join(", ")}`]
+      : []),
+    ...(explicitlyDisabledPluginEntries.length > 0
+      ? [
+          `Secure M365 prompt-surface plugin entries explicitly disabled: ${explicitlyDisabledPluginEntries.join(
+            ", ",
+          )}`,
+        ]
+      : []),
+  ];
+
+  return {
+    status:
+      explicitlyDisabledPluginEntries.length > 0
+        ? "blocked"
+        : missingPluginEntries.length > 0
+          ? "repairable"
+          : "ready",
+    requiredPluginEntries: [...REQUIRED_MSTEAMS_EMPLOYEE_M365_PROMPT_SURFACE_PLUGIN_IDS],
+    presentPluginEntries,
+    missingPluginEntries,
+    explicitlyDisabledPluginEntries,
+    messages:
+      messages.length > 0 ? messages : ["Secure M365 prompt-surface plugin entries are present."],
+  };
+}
+
+export function ensureMSTeamsEmployeeM365PromptSurfaceConfig<
+  TConfig extends Record<string, unknown>,
+>(config: TConfig): MSTeamsEmployeeM365PromptSurfaceRepairResult<TConfig> {
+  const status = diagnoseMSTeamsEmployeeM365PromptSurfaceConfig(config);
+  if (status.status !== "repairable") {
+    return {
+      config,
+      status,
+      addedPluginEntries: [],
+      sideEffects: [],
+    };
+  }
+
+  const plugins = isRecord(config.plugins) ? config.plugins : {};
+  const entries = isRecord(plugins.entries) ? plugins.entries : {};
+  const repairedEntries = { ...entries };
+  for (const pluginId of status.missingPluginEntries) {
+    repairedEntries[pluginId] = {};
+  }
+  const repairedConfig = {
+    ...config,
+    plugins: {
+      ...plugins,
+      entries: repairedEntries,
+    },
+  };
+
+  return {
+    // SAFETY: The repair preserves the caller's config shape and only fills missing plugins.entries records.
+    config: repairedConfig as TConfig,
+    status: diagnoseMSTeamsEmployeeM365PromptSurfaceConfig(repairedConfig),
+    addedPluginEntries: status.missingPluginEntries,
+    sideEffects: ["employee-config-prompt-surface-repair"],
+  };
+}
 
 function normalizeSlug(input: string | undefined): string {
   return (input ?? "")
@@ -594,6 +737,7 @@ export function createMSTeamsEmployeeOnboardingProvisioningDryRun(params: {
           },
         },
       },
+      configGuard: EMPLOYEE_M365_PROMPT_SURFACE_CONFIG_GUARD,
     },
     commands: {
       createAgent: `openclaw agents add ${shellSingleQuote(agentId)} --workspace ${shellSingleQuote(
@@ -615,6 +759,7 @@ export function createMSTeamsEmployeeOnboardingProvisioningDryRun(params: {
       `${serviceName} service reaches 1/1`,
       "employee BWS token sees the employee project and shared connector project required for its scope",
       "shared Salesforce and Krisp connector SecretRefs resolve from BWS without exposing values",
+      "employee config includes device-pair and microsoft prompt-surface plugin entries for secure M365 auth handoff",
       "employee-agent endpoint ports remain unpublished",
       "new Teams direct peer routes to the new employee agent",
       "Kevin Teams direct peer still routes to kevin-k",
@@ -768,8 +913,16 @@ export function createMSTeamsEmployeeOnboardingExecutionReadinessProof(params: {
       "employee service endpoint ports inspect returns no published ports",
       "employee BWS project access proof succeeds from inside the container",
       "shared connector SecretRefs resolve from BWS without value exposure",
+      "employee config prompt-surface guard passes before M365 auth is considered ready",
       "production health validation remains green",
     ],
+    configGuard: {
+      m365PromptSurface: {
+        requiredPluginEntries: [...REQUIRED_MSTEAMS_EMPLOYEE_M365_PROMPT_SURFACE_PLUGIN_IDS],
+        explicitDisablePolicy: "block-and-report",
+        passed: true,
+      },
+    },
     approvalPacket: {
       required: true,
       summary: `Approve employee onboarding execution for ${params.plan.employee.slug} from pending request ${params.plan.request.id}.`,
@@ -782,6 +935,7 @@ export function createMSTeamsEmployeeOnboardingExecutionReadinessProof(params: {
         `employee BWS machine account ${params.plan.proposed.bws.machineAccountName}`,
         `employee BWS token secret reference ${params.plan.proposed.bws.tokenSecretRef}`,
         `read access to shared connector project ${params.plan.proposed.bws.sharedConnectorProjectName}`,
+        "employee config prompt-surface guard for secure M365 auth handoff",
         "one exact Teams direct-peer route binding",
       ],
       rollbackProof: [

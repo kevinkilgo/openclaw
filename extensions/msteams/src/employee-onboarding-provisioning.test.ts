@@ -6,6 +6,8 @@ import {
   createMSTeamsEmployeeOnboardingExecutionReadinessProof,
   createMSTeamsEmployeeOnboardingAdminTransition,
   createMSTeamsEmployeeOnboardingAdminDryRun,
+  diagnoseMSTeamsEmployeeM365PromptSurfaceConfig,
+  ensureMSTeamsEmployeeM365PromptSurfaceConfig,
   redactMSTeamsEmployeeOnboardingExecutionReadinessProof,
   redactMSTeamsEmployeeOnboardingProvisioningDryRun,
   renderMSTeamsEmployeeOnboardingProvisioningStack,
@@ -130,6 +132,13 @@ describe("msteams employee onboarding provisioning dry run", () => {
             },
           },
         },
+        configGuard: {
+          m365PromptSurface: {
+            requiredPluginEntries: ["device-pair", "microsoft"],
+            autoRepair: "add-missing-empty-plugin-entries",
+            explicitDisablePolicy: "block-and-report",
+          },
+        },
       },
     });
     expect(dryRun.status).toBe("ready");
@@ -143,6 +152,79 @@ describe("msteams employee onboarding provisioning dry run", () => {
     expect(dryRun.validation).toContain(
       "employee BWS token sees the employee project and shared connector project required for its scope",
     );
+    expect(dryRun.validation).toContain(
+      "employee config includes device-pair and microsoft prompt-surface plugin entries for secure M365 auth handoff",
+    );
+  });
+
+  it("repairs missing M365 secure prompt-surface plugin entries without touching secrets", () => {
+    const config = {
+      plugins: {
+        entries: {
+          codex: { enabled: true },
+          openai: { enabled: true },
+        },
+      },
+      mcpServers: {
+        ms365: {
+          command: "ms-365-mcp-server",
+        },
+      },
+    };
+
+    expect(diagnoseMSTeamsEmployeeM365PromptSurfaceConfig(config)).toMatchObject({
+      status: "repairable",
+      requiredPluginEntries: ["device-pair", "microsoft"],
+      presentPluginEntries: [],
+      missingPluginEntries: ["device-pair", "microsoft"],
+      explicitlyDisabledPluginEntries: [],
+    });
+
+    const repaired = ensureMSTeamsEmployeeM365PromptSurfaceConfig(config);
+
+    expect(repaired).toMatchObject({
+      status: {
+        status: "ready",
+        presentPluginEntries: ["device-pair", "microsoft"],
+        missingPluginEntries: [],
+        explicitlyDisabledPluginEntries: [],
+      },
+      addedPluginEntries: ["device-pair", "microsoft"],
+      sideEffects: ["employee-config-prompt-surface-repair"],
+    });
+    expect(repaired.config.plugins.entries).toMatchObject({
+      codex: { enabled: true },
+      openai: { enabled: true },
+      "device-pair": {},
+      microsoft: {},
+    });
+    expect(repaired.config.mcpServers).toBe(config.mcpServers);
+  });
+
+  it("blocks instead of overriding explicitly disabled M365 prompt-surface entries", () => {
+    const config = {
+      plugins: {
+        entries: {
+          "device-pair": {},
+          microsoft: { enabled: false },
+        },
+      },
+    };
+
+    const repaired = ensureMSTeamsEmployeeM365PromptSurfaceConfig(config);
+
+    expect(repaired).toMatchObject({
+      config,
+      status: {
+        status: "blocked",
+        presentPluginEntries: ["device-pair"],
+        missingPluginEntries: [],
+        explicitlyDisabledPluginEntries: ["microsoft"],
+      },
+      addedPluginEntries: [],
+      sideEffects: [],
+    });
+    expect(repaired.config.plugins.entries.microsoft).toEqual({ enabled: false });
   });
 
   it("allows onboarding to bind a pre-created employee BWS project name", () => {
@@ -417,6 +499,13 @@ describe("msteams employee onboarding provisioning dry run", () => {
         published: [],
         passed: true,
       },
+      configGuard: {
+        m365PromptSurface: {
+          requiredPluginEntries: ["device-pair", "microsoft"],
+          explicitDisablePolicy: "block-and-report",
+          passed: true,
+        },
+      },
       approvalPacket: {
         required: true,
       },
@@ -428,11 +517,17 @@ describe("msteams employee onboarding provisioning dry run", () => {
     expect(proof.containerValidation).toContain(
       "employee BWS project access proof succeeds from inside the container",
     );
+    expect(proof.containerValidation).toContain(
+      "employee config prompt-surface guard passes before M365 auth is considered ready",
+    );
     expect(proof.approvalPacket.expectedChanges).toContain(
       "employee BWS project openclaw-second-pilot",
     );
     expect(proof.approvalPacket.expectedChanges).toContain(
       "read access to shared connector project openclaw-employee-connectors",
+    );
+    expect(proof.approvalPacket.expectedChanges).toContain(
+      "employee config prompt-surface guard for secure M365 auth handoff",
     );
     expect(proof.approvalPacket.rollbackProof).toContain(dryRun.commands.rollbackRoute);
     expect(proof.hostBackedMounts.required).toContain(
