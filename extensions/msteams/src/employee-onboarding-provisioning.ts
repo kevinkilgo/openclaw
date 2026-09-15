@@ -217,6 +217,23 @@ export type MSTeamsEmployeeSalesforceConnectorRepairResult<TConfig> = {
   sideEffects: [] | ["employee-config-salesforce-connector-repair"];
 };
 
+export const REQUIRED_MSTEAMS_EMPLOYEE_SALESFORCE_CREDENTIAL_MOUNT_TARGETS = [
+  "/home/node/.sf",
+  "/home/node/.sfdx",
+] as const;
+
+export type MSTeamsEmployeeSalesforceCredentialMountTarget =
+  (typeof REQUIRED_MSTEAMS_EMPLOYEE_SALESFORCE_CREDENTIAL_MOUNT_TARGETS)[number];
+
+export type MSTeamsEmployeeSalesforceRuntimeReadinessStatus = {
+  status: "ready" | "repairable" | "blocked";
+  connector: MSTeamsEmployeeSalesforceConnectorStatus;
+  requiredCredentialMountTargets: MSTeamsEmployeeSalesforceCredentialMountTarget[];
+  presentCredentialMountTargets: MSTeamsEmployeeSalesforceCredentialMountTarget[];
+  missingCredentialMountTargets: MSTeamsEmployeeSalesforceCredentialMountTarget[];
+  messages: string[];
+};
+
 export type MSTeamsEmployeeOnboardingExecutionReadinessProof = {
   dryRun: true;
   status: "ready" | "blocked";
@@ -673,6 +690,43 @@ export function ensureMSTeamsEmployeeSalesforceConnectorConfig<
     addedMcpServer: !status.mcpServerPresent || !status.launcherShapeReady,
     addedToolAllowEntries,
     sideEffects: ["employee-config-salesforce-connector-repair"],
+  };
+}
+
+export function diagnoseMSTeamsEmployeeSalesforceRuntimeReadiness(
+  config: unknown,
+  mountedTargets: readonly string[],
+): MSTeamsEmployeeSalesforceRuntimeReadinessStatus {
+  const connector = diagnoseMSTeamsEmployeeSalesforceConnectorConfig(config);
+  const presentCredentialMountTargets =
+    REQUIRED_MSTEAMS_EMPLOYEE_SALESFORCE_CREDENTIAL_MOUNT_TARGETS.filter((target) =>
+      mountedTargets.includes(target),
+    );
+  const missingCredentialMountTargets =
+    REQUIRED_MSTEAMS_EMPLOYEE_SALESFORCE_CREDENTIAL_MOUNT_TARGETS.filter(
+      (target) => !mountedTargets.includes(target),
+    );
+  const messages = [
+    ...connector.messages,
+    ...(missingCredentialMountTargets.length > 0
+      ? [`Missing Salesforce credential mount targets: ${missingCredentialMountTargets.join(", ")}`]
+      : ["Salesforce credential mount targets are present."]),
+  ];
+
+  return {
+    status:
+      connector.status === "blocked"
+        ? "blocked"
+        : connector.status === "repairable" || missingCredentialMountTargets.length > 0
+          ? "repairable"
+          : "ready",
+    connector,
+    requiredCredentialMountTargets: [
+      ...REQUIRED_MSTEAMS_EMPLOYEE_SALESFORCE_CREDENTIAL_MOUNT_TARGETS,
+    ],
+    presentCredentialMountTargets,
+    missingCredentialMountTargets,
+    messages,
   };
 }
 

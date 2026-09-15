@@ -8,6 +8,7 @@ import {
   createMSTeamsEmployeeOnboardingAdminDryRun,
   diagnoseMSTeamsEmployeeM365PromptSurfaceConfig,
   diagnoseMSTeamsEmployeeSalesforceConnectorConfig,
+  diagnoseMSTeamsEmployeeSalesforceRuntimeReadiness,
   ensureMSTeamsEmployeeM365PromptSurfaceConfig,
   ensureMSTeamsEmployeeSalesforceConnectorConfig,
   redactMSTeamsEmployeeOnboardingExecutionReadinessProof,
@@ -332,6 +333,56 @@ describe("msteams employee onboarding provisioning dry run", () => {
       sideEffects: [],
     });
     expect(repaired.config.mcp.servers.salesforce).toEqual({ enabled: false });
+  });
+
+  it("reports Salesforce runtime readiness gaps when credential mounts are absent", () => {
+    const repaired = ensureMSTeamsEmployeeSalesforceConnectorConfig({
+      agents: {
+        entries: {
+          main: {},
+        },
+      },
+    });
+
+    const status = diagnoseMSTeamsEmployeeSalesforceRuntimeReadiness(repaired.config, [
+      "/home/openclaw/.openclaw",
+    ]);
+
+    expect(status).toMatchObject({
+      status: "repairable",
+      connector: {
+        status: "ready",
+      },
+      missingCredentialMountTargets: ["/home/node/.sf", "/home/node/.sfdx"],
+    });
+    expect(status.messages).toContain(
+      "Missing Salesforce credential mount targets: /home/node/.sf, /home/node/.sfdx",
+    );
+  });
+
+  it("passes Salesforce runtime readiness only when config and credential mounts are present", () => {
+    const repaired = ensureMSTeamsEmployeeSalesforceConnectorConfig({
+      agents: {
+        entries: {
+          main: {},
+        },
+      },
+    });
+
+    const status = diagnoseMSTeamsEmployeeSalesforceRuntimeReadiness(repaired.config, [
+      "/home/openclaw/.openclaw",
+      "/home/node/.sf",
+      "/home/node/.sfdx",
+    ]);
+
+    expect(status).toMatchObject({
+      status: "ready",
+      connector: {
+        status: "ready",
+      },
+      presentCredentialMountTargets: ["/home/node/.sf", "/home/node/.sfdx"],
+      missingCredentialMountTargets: [],
+    });
   });
 
   it("allows onboarding to bind a pre-created employee BWS project name", () => {
