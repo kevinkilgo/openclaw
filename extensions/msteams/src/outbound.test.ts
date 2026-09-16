@@ -217,6 +217,44 @@ describe("msteamsOutbound cfg threading", () => {
     });
   });
 
+  it("chunks direct text sends so long message tool replies are not truncated", async () => {
+    const sendText = requireSendText();
+    const onDeliveryResult = vi.fn();
+    const chunkingCfg = {
+      channels: {
+        msteams: {
+          appId: "resolved-app-id",
+          textChunkLimit: 5,
+        },
+      },
+    } as OpenClawConfig;
+    mocks.sendMessageMSTeams.mockImplementation(async ({ text }) => ({
+      messageId: `msg-${text}`,
+      conversationId: "conv-1",
+    }));
+
+    const result = await sendText({
+      cfg: chunkingCfg,
+      to: "conversation:abc",
+      text: "alpha beta gamma",
+      onDeliveryResult,
+    });
+
+    expect(mocks.sendMessageMSTeams).toHaveBeenCalledTimes(3);
+    expect(mocks.sendMessageMSTeams.mock.calls.map(([call]) => call.text)).toEqual([
+      "alpha",
+      "beta",
+      "gamma",
+    ]);
+    expect(result).toMatchObject({ messageId: "msg-gamma", target: { id: "conv-1" } });
+    expect(onDeliveryResult).toHaveBeenCalledTimes(3);
+    expect(onDeliveryResult.mock.calls.map(([delivery]) => delivery.messageId)).toEqual([
+      "msg-alpha",
+      "msg-beta",
+      "msg-gamma",
+    ]);
+  });
+
   it("passes resolved cfg and media roots for media sends", async () => {
     const cfgValue = {
       channels: {
