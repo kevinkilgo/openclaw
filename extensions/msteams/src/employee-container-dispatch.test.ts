@@ -115,6 +115,12 @@ function createDefaultWaitConfig(): OpenClawConfig {
   return cfg;
 }
 
+function createLongWaitConfig(): OpenClawConfig {
+  const cfg = createConfig();
+  cfg.channels!.msteams!.employeeContainerDispatch!.waitTimeoutMs = 600_000;
+  return cfg;
+}
+
 describe("msteams employee container dispatch", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -204,6 +210,28 @@ describe("msteams employee container dispatch", () => {
     expect(replyDispatcherMockState.settle).toHaveBeenCalledTimes(1);
   });
 
+  it("acknowledges accepted long-running employee turns before the final reply", async () => {
+    const cfg = createLongWaitConfig();
+    const runtime = { error: vi.fn() } as unknown as RuntimeEnv;
+    const handler = createMSTeamsMessageHandler(createMSTeamsMessageHandlerDeps({ cfg, runtime }));
+
+    await handler(createContext());
+
+    expect(replyDispatcherMockState.deliver).toHaveBeenNthCalledWith(
+      1,
+      {
+        text: expect.stringContaining("I'm working on that now"),
+      },
+      expect.objectContaining({ kind: "progress", stage: "accepted" }),
+    );
+    expect(replyDispatcherMockState.deliver).toHaveBeenNthCalledWith(
+      2,
+      { text: "Reply from employee main" },
+      expect.objectContaining({ kind: "final", stage: "final" }),
+    );
+    expect(replyDispatcherMockState.settle).toHaveBeenCalledTimes(2);
+  });
+
   it("defaults Teams employee dispatch waits to the simple-turn SLA", async () => {
     const cfg = createDefaultWaitConfig();
     const runtime = { error: vi.fn() } as unknown as RuntimeEnv;
@@ -282,6 +310,13 @@ describe("msteams employee container dispatch", () => {
     expect(runtime.error).toHaveBeenCalledWith(
       expect.stringContaining("connector/tool startup timeout after 60000ms"),
     );
+    expect(replyDispatcherMockState.deliver).toHaveBeenCalledWith(
+      {
+        text: expect.stringContaining("I hit an issue before I could finish that request"),
+      },
+      expect.objectContaining({ kind: "progress", stage: "failed" }),
+    );
+    expect(replyDispatcherMockState.settle).toHaveBeenCalledTimes(1);
   });
 
   it("treats employee Salesforce disabled replies as connector readiness failures", async () => {

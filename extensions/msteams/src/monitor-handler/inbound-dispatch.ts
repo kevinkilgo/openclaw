@@ -60,6 +60,11 @@ type GatewayAgentWaitResult = {
 const EMPLOYEE_CONTAINER_SESSION_CLAIM_RETRY_ATTEMPTS = 3;
 const EMPLOYEE_CONTAINER_SESSION_CLAIM_RETRY_DELAY_MS = 1_000;
 const EMPLOYEE_CONTAINER_DEFAULT_WAIT_TIMEOUT_MS = 60_000;
+const EMPLOYEE_CONTAINER_PROGRESS_ACK_THRESHOLD_MS = 120_000;
+const EMPLOYEE_CONTAINER_PROGRESS_ACK_TEXT =
+  "I'm working on that now. Larger reports or connector-heavy requests can take a few minutes; I'll send the full result here when it's ready.";
+const EMPLOYEE_CONTAINER_FAILURE_UPDATE_TEXT =
+  "I hit an issue before I could finish that request. I've logged it and we're working on the fix; I'll notify you when it's ready to retry.";
 const activeEmployeeContainerProviderLoginFlows = createProviderLoginFlowRegistry();
 function employeeContainerGatewayClientOptions() {
   return {
@@ -309,6 +314,38 @@ function logEmployeeCommsTrace(params: {
   params.log.info("msteams employee comms e2e trace", params.trace);
 }
 
+async function deliverEmployeeContainerStatusUpdate(params: {
+  delivery: ReturnType<typeof createMSTeamsReplyDispatcher>["delivery"];
+  settleDelivery?: ReturnType<
+    typeof createMSTeamsReplyDispatcher
+  >["dispatcherOptions"]["onSettled"];
+  text: string;
+  routeAgentId: string;
+  stage: "accepted" | "failed";
+  log: MSTeamsMessageHandlerDeps["log"];
+}): Promise<boolean> {
+  try {
+    const delivered = await params.delivery.deliver({ text: params.text }, {
+      kind: "progress",
+      stage: params.stage,
+    } as never);
+    await params.settleDelivery?.();
+    await delivered?.finalization;
+    params.log.info("msteams employee container status update delivered", {
+      routeAgentId: params.routeAgentId,
+      stage: params.stage,
+    });
+    return true;
+  } catch (err) {
+    params.log.warn?.("msteams employee container status update failed", {
+      routeAgentId: params.routeAgentId,
+      stage: params.stage,
+      error: formatUnknownError(err),
+    });
+    return false;
+  }
+}
+
 function createEmployeeCommsTimeoutError(params: {
   routeAgentId: string;
   waitTimeoutMs: number;
@@ -555,6 +592,16 @@ async function dispatchViaEmployeeContainer(params: {
       }
       trace.employeeRunId = accepted.runId;
       trace.dispatchAcceptedAtMs = nowMs();
+      if (waitTimeoutMs >= EMPLOYEE_CONTAINER_PROGRESS_ACK_THRESHOLD_MS) {
+        await deliverEmployeeContainerStatusUpdate({
+          delivery: params.delivery,
+          settleDelivery: params.settleDelivery,
+          text: EMPLOYEE_CONTAINER_PROGRESS_ACK_TEXT,
+          routeAgentId: params.routeAgentId,
+          stage: "accepted",
+          log: params.log,
+        });
+      }
       // SAFETY: agent.wait responses are narrowed by status/error/terminalReply checks before data is delivered.
       waitResult = (await callGatewayFromCli(
         "agent.wait",
@@ -987,6 +1034,14 @@ export async function dispatchMSTeamsInboundTurn(params: {
         routeAgentId: route.agentId,
         employeeSessionKey: resolveEmployeeContainerSessionKey(route.agentId, route.sessionKey),
         error: formatUnknownError(err),
+      });
+      await deliverEmployeeContainerStatusUpdate({
+        delivery,
+        settleDelivery: dispatcherOptions.onSettled,
+        text: EMPLOYEE_CONTAINER_FAILURE_UPDATE_TEXT,
+        routeAgentId: route.agentId,
+        stage: "failed",
+        log,
       });
       runtime.error(
         formatEmployeeContainerDispatchError({
