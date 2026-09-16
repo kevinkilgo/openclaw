@@ -100,6 +100,11 @@ export function createMSTeamsReplyDispatcher(params: {
   // bubble.
   const FULL_TEXT_ARTIFACT_THRESHOLD = 2_500;
 
+  // FileConsentCard delivery in personal chats is not a guaranteed visible
+  // full-response path on every Teams client. Keep backup text parts small
+  // enough to avoid the mobile clipping seen with larger follow-up bubbles.
+  const FULL_TEXT_BACKUP_CHUNK_LIMIT = 900;
+
   // Forward references: sendTypingIndicator is built before the stream
   // controller exists, but the keepalive tick needs to check stream state so
   // we don't overlay "..." typing on the visible streaming card, and we want
@@ -304,7 +309,7 @@ export function createMSTeamsReplyDispatcher(params: {
     });
   };
 
-  const createFullTextArtifactPayload = async (payload: ReplyPayload): Promise<ReplyPayload> => {
+  const createFullTextArtifactPayloads = async (payload: ReplyPayload): Promise<ReplyPayload[]> => {
     if (
       conversationType !== "personal" ||
       typeof payload.text !== "string" ||
@@ -312,7 +317,7 @@ export function createMSTeamsReplyDispatcher(params: {
       payload.mediaUrl ||
       payload.mediaUrls?.length
     ) {
-      return payload;
+      return [payload];
     }
 
     const directory = path.join(resolvePreferredOpenClawTmpDir(), "msteams-full-responses");
@@ -321,11 +326,43 @@ export function createMSTeamsReplyDispatcher(params: {
     const filePath = path.join(directory, filename);
     await writeFile(filePath, payload.text, "utf8");
 
-    return {
+    const artifactPayload: ReplyPayload = {
       ...payload,
       text: `Full response attached as ${filename}. Teams is clipping long chat bubbles on some clients, so OpenClaw is sending the complete answer as a text file.`,
       mediaUrl: filePath,
     };
+
+    if (params.sharePointSiteId) {
+      return [artifactPayload];
+    }
+
+    const chunks: string[] = [];
+    for (let offset = 0; offset < payload.text.length; offset += FULL_TEXT_BACKUP_CHUNK_LIMIT) {
+      const chunk = payload.text.slice(offset, offset + FULL_TEXT_BACKUP_CHUNK_LIMIT).trim();
+      if (chunk) {
+        chunks.push(chunk);
+      }
+    }
+    const backupPayloads = chunks.map((chunk, index): ReplyPayload => {
+      const ordinal = index + 1;
+      const final = ordinal === chunks.length;
+      return {
+        ...payload,
+        mediaUrl: undefined,
+        mediaUrls: undefined,
+        text: [
+          `Full response backup part ${ordinal}/${chunks.length}`,
+          "",
+          chunk,
+          "",
+          final ? "END OF FULL RESPONSE BACKUP" : undefined,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      };
+    });
+
+    return [artifactPayload, ...backupPayloads];
   };
 
   const renderReplyPayload = (payload: ReplyPayload) => {
@@ -339,7 +376,13 @@ export function createMSTeamsReplyDispatcher(params: {
   };
 
   const renderPostNativePayload = async (payload: ReplyPayload) => {
-    return renderReplyPayload(await createFullTextArtifactPayload(payload));
+    return renderReplyPayloadsToMessages(await createFullTextArtifactPayloads(payload), {
+      textChunkLimit: params.textLimit,
+      chunkText: true,
+      mediaMode: "split",
+      tableMode,
+      chunkMode,
+    });
   };
 
   const deliveryOutcome = (delivery: PendingDelivery): DeliveryOutcome => {

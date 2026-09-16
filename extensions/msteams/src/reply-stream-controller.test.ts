@@ -568,6 +568,24 @@ describe("createTeamsReplyStreamController", () => {
     expect(stream.close).toHaveBeenCalledTimes(1);
   });
 
+  it("queues a post-native remainder for long partial-mode finals", async () => {
+    const stream = makeStream();
+    const ctrl = makeController({ stream });
+    const longFinal = "x".repeat(12_000) + "\n\n" + "y".repeat(1200);
+
+    ctrl.onPartialReply({ text: longFinal });
+    expect(ctrl.preparePayload({ text: longFinal })).toBeUndefined();
+
+    await expect(ctrl.finalize()).resolves.toEqual({
+      visibleReplySent: true,
+      content: longFinal,
+      logicalContent: longFinal,
+      messageId: "stream-final",
+      postNativePayloads: [{ text: "y".repeat(1200) }],
+    });
+    expect(stream.close).toHaveBeenCalledTimes(1);
+  });
+
   it("streams compact Teams progress lines when tool progress is enabled", async () => {
     vi.useFakeTimers();
     const stream = makeStream();

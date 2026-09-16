@@ -1178,27 +1178,38 @@ describe("createMSTeamsReplyDispatcher", () => {
 
     await dispatcher.dispatcherOptions.onSettled?.();
 
-    await expect(result?.finalization).resolves.toEqual({
+    const outcome = await result?.finalization;
+    expect(outcome).toMatchObject({
       visibleReplySent: true,
-      messageIds: ["stream-final", "full-response-file-card"],
       content: fullReply,
     });
+    expect(outcome?.messageIds?.[0]).toBe("stream-final");
+    expect(outcome?.messageIds?.length).toBeGreaterThan(2);
     const renderCall = renderReplyPayloadsToMessagesMock.mock.calls[0];
     expect(renderCall).toBeDefined();
     const renderedPayload = renderCall![0][0] as ReplyPayload;
     expect(renderedPayload.text).toContain("Full response attached as openclaw-full-response-");
     expect(renderedPayload.mediaUrl).toMatch(/openclaw-full-response-.*\.txt$/u);
+    const backupPayloads = renderCall![0].slice(1) as ReplyPayload[];
+    expect(backupPayloads.length).toBeGreaterThan(1);
+    expect(backupPayloads[0]?.text).toContain("Full response backup part 1/");
+    expect(backupPayloads.at(-1)?.text).toContain("END OF FULL RESPONSE BACKUP");
     const attachedText = await readFile(renderedPayload.mediaUrl!, "utf8");
     expect(attachedText).toContain(remainder);
     expect(attachedText.length).toBeGreaterThan(remainder.length);
-    expect(sendMSTeamsMessagesMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        messages: [
-          expect.objectContaining({
-            mediaUrl: renderedPayload.mediaUrl,
-          }),
-        ],
-      }),
+    const sentMessages = sendMSTeamsMessagesMock.mock.calls.flatMap(([send]) => send.messages);
+    expect(sentMessages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          mediaUrl: renderedPayload.mediaUrl,
+        }),
+        expect.objectContaining({
+          text: expect.stringContaining("Full response backup part 1/"),
+        }),
+        expect.objectContaining({
+          text: expect.stringContaining("END OF FULL RESPONSE BACKUP"),
+        }),
+      ]),
     );
   });
 
