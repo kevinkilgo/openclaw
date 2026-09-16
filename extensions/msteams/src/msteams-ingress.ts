@@ -34,6 +34,7 @@ export type MSTeamsIngressDispatchResult = ChannelIngressMonitorDeliveryResult;
 type MSTeamsIngressOptions = {
   accountId: string;
   runtime: Pick<RuntimeEnv, "error" | "log">;
+  adoptionStallTimeoutMs?: number;
   dispatch: (
     activity: MSTeamsIngressActivity,
     lifecycle: MSTeamsIngressLifecycle,
@@ -268,6 +269,7 @@ export function createMSTeamsIngress(options: MSTeamsIngressOptions): MSTeamsIng
       orderBy: "received",
       scanLimit: MSTEAMS_INGRESS_SCAN_LIMIT,
       startLimit: MSTEAMS_INGRESS_MAX_CONCURRENT_DELIVERIES,
+      adoptionStallTimeoutMs: options.adoptionStallTimeoutMs,
       resolveNonRetryableFailure: (error) => {
         if (error instanceof MSTeamsIngressPayloadError) {
           return { reason: error.reason, message: error.message };

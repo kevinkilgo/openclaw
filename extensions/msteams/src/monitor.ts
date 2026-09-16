@@ -63,6 +63,8 @@ import { createMSTeamsSsoTokenStoreFs } from "./sso-token-store.js";
 import { resolveMSTeamsCredentials } from "./token.js";
 import { applyMSTeamsWebhookTimeouts } from "./webhook-timeouts.js";
 
+const MSTEAMS_EMPLOYEE_DISPATCH_ADOPTION_STALL_GRACE_MS = 30_000;
+
 type MonitorMSTeamsOpts = {
   cfg: OpenClawConfig;
   runtime?: RuntimeEnv;
@@ -77,6 +79,14 @@ type MonitorMSTeamsResult = {
   app: unknown;
   shutdown: () => Promise<void>;
 };
+
+function resolveMSTeamsIngressAdoptionStallTimeoutMs(cfg: OpenClawConfig): number | undefined {
+  const waitTimeoutMs = cfg.channels?.msteams?.employeeContainerDispatch?.waitTimeoutMs;
+  if (waitTimeoutMs === undefined || !Number.isFinite(waitTimeoutMs)) {
+    return undefined;
+  }
+  return Math.max(1, Math.floor(waitTimeoutMs + MSTEAMS_EMPLOYEE_DISPATCH_ADOPTION_STALL_GRACE_MS));
+}
 
 export async function monitorMSTeamsProvider(
   opts: MonitorMSTeamsOpts,
@@ -325,6 +335,7 @@ export async function monitorMSTeamsProvider(
   const ingress = createMSTeamsIngress({
     accountId: appId,
     runtime,
+    adoptionStallTimeoutMs: resolveMSTeamsIngressAdoptionStallTimeoutMs(cfg),
     dispatch: async (activity, lifecycle, liveContext) => {
       // The journaled activity is the dispatch payload; the live context only
       // supplies the transport surface. A duplicate delivery's context must
