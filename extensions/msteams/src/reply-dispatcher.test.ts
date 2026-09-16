@@ -1,4 +1,5 @@
 // Msteams tests cover reply dispatcher plugin behavior.
+import { readFile } from "node:fs/promises";
 import { PlatformMessageNotDispatchedError } from "openclaw/plugin-sdk/error-runtime";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { createReplyDispatcher } from "openclaw/plugin-sdk/reply-runtime";
@@ -1159,6 +1160,46 @@ describe("createMSTeamsReplyDispatcher", () => {
       expect.any(Object),
     );
     expect(sendMSTeamsMessagesMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("attaches long post-native progress remainder as a text file", async () => {
+    renderReplyPayloadsToMessagesMock.mockImplementation(
+      (payloads) =>
+        payloads.map((payload) => ({ text: payload.text, mediaUrl: payload.mediaUrl })) as never,
+    );
+    sendMSTeamsMessagesMock.mockResolvedValue(["full-response-file-card"] as never);
+    const dispatcher = createDispatcher("personal", { streaming: { mode: "progress" } });
+    const previewPrefix = "A".repeat(12_100);
+    const remainder = "B".repeat(3_200);
+    const fullReply = `${previewPrefix}\n\n${remainder}`;
+
+    const result = await dispatcher.delivery.deliver({ text: fullReply }, { kind: "final" });
+    expect(sendMSTeamsMessagesMock).not.toHaveBeenCalled();
+
+    await dispatcher.dispatcherOptions.onSettled?.();
+
+    await expect(result?.finalization).resolves.toEqual({
+      visibleReplySent: true,
+      messageIds: ["stream-final", "full-response-file-card"],
+      content: fullReply,
+    });
+    const renderCall = renderReplyPayloadsToMessagesMock.mock.calls[0];
+    expect(renderCall).toBeDefined();
+    const renderedPayload = renderCall![0][0] as ReplyPayload;
+    expect(renderedPayload.text).toContain("Full response attached as openclaw-full-response-");
+    expect(renderedPayload.mediaUrl).toMatch(/openclaw-full-response-.*\.txt$/u);
+    const attachedText = await readFile(renderedPayload.mediaUrl!, "utf8");
+    expect(attachedText).toContain(remainder);
+    expect(attachedText.length).toBeGreaterThan(remainder.length);
+    expect(sendMSTeamsMessagesMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          expect.objectContaining({
+            mediaUrl: renderedPayload.mediaUrl,
+          }),
+        ],
+      }),
+    );
   });
 
   it("settles delivery when sent-message ID observation throws", async () => {
