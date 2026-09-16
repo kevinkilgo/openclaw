@@ -557,13 +557,13 @@ describe("createTeamsReplyStreamController", () => {
     const longFinal = `${"x".repeat(12_000)}\n\n${"y".repeat(1200)}`;
 
     expect(ctrl.preparePayload({ text: longFinal })).toBeUndefined();
-    expect(stream.emit).toHaveBeenCalledWith("x".repeat(12_000));
+    expect(stream.emit).toHaveBeenCalledWith("x".repeat(6000));
     await expect(ctrl.finalize()).resolves.toEqual({
       visibleReplySent: true,
-      content: "x".repeat(12_000),
+      content: "x".repeat(6000),
       logicalContent: longFinal,
       messageId: "stream-final",
-      postNativePayloads: [{ text: "y".repeat(1200) }],
+      postNativePayloads: [{ text: `${"x".repeat(6000)}\n\n${"y".repeat(1200)}` }],
     });
     expect(stream.close).toHaveBeenCalledTimes(1);
   });
@@ -581,7 +581,7 @@ describe("createTeamsReplyStreamController", () => {
       content: longFinal,
       logicalContent: longFinal,
       messageId: "stream-final",
-      postNativePayloads: [{ text: "y".repeat(1200) }],
+      postNativePayloads: [{ text: `${"x".repeat(6000)}\n\n${"y".repeat(1200)}` }],
     });
     expect(stream.close).toHaveBeenCalledTimes(1);
   });

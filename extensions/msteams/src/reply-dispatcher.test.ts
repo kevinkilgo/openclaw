@@ -1161,6 +1161,38 @@ describe("createMSTeamsReplyDispatcher", () => {
     expect(sendMSTeamsMessagesMock).toHaveBeenCalledTimes(1);
   });
 
+  it("splits long personal block replies into in-Teams continuation messages", async () => {
+    registerHooks("message_sending");
+    renderReplyPayloadsToMessagesMock.mockImplementation(
+      (payloads) =>
+        payloads.map((payload) => ({ text: payload.text, mediaUrl: payload.mediaUrl })) as never,
+    );
+    sendMSTeamsMessagesMock.mockResolvedValue(["continuation-id"] as never);
+    const dispatcher = createDispatcher("personal");
+    const longReply = [
+      "Executive summary",
+      "A".repeat(1_100),
+      "B".repeat(1_100),
+      "C".repeat(1_100),
+    ].join("\n\n");
+
+    const result = await dispatcher.delivery.deliver({ text: longReply }, { kind: "final" });
+    await dispatcher.dispatcherOptions.onSettled?.();
+
+    await expect(result?.finalization).resolves.toMatchObject({
+      visibleReplySent: true,
+      content: longReply,
+    });
+    const renderCall = renderReplyPayloadsToMessagesMock.mock.calls[0];
+    expect(renderCall).toBeDefined();
+    const continuationPayloads = renderCall![0] as ReplyPayload[];
+    expect(continuationPayloads.length).toBeGreaterThan(1);
+    expect(continuationPayloads[0]?.text).toContain("Response continued 1/");
+    expect(continuationPayloads.at(-1)?.text).toContain("END OF FULL RESPONSE");
+    expect(continuationPayloads.some((payload) => payload.mediaUrl)).toBe(false);
+    expect(continuationPayloads.every((payload) => (payload.text?.length ?? 0) < 1_000)).toBe(true);
+  });
+
   it("sends long post-native progress remainder as in-Teams continuation messages", async () => {
     renderReplyPayloadsToMessagesMock.mockImplementation(
       (payloads) =>

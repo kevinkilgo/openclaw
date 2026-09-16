@@ -42,7 +42,7 @@ type DeferredReplacementEntry =
   | { kind: "payload"; payload: ReplyPayload }
   | { kind: "replacement"; payload: ReplyPayload };
 
-const MSTEAMS_NATIVE_LONG_FINAL_PREVIEW_LIMIT = 12000;
+const MSTEAMS_NATIVE_LONG_FINAL_PREVIEW_LIMIT = 6000;
 
 // The SDK throws StreamCancelledError synchronously from stream.emit/update
 // when the user pressed Stop in Teams (Teams replies 403 to the next chunk
