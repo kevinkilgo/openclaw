@@ -17,6 +17,21 @@ export type McpOAuthConfig = {
 
 const LEGACY_DEFAULT_REDIRECT_URL = "http://127.0.0.1:8989/oauth/callback";
 
+function shouldUseSharedBwsKrispRepairHint(serverName: string): boolean {
+  return (
+    serverName.trim().toLowerCase() === "krisp" &&
+    process.env.OPENCLAW_AGENT_SCOPE === "user" &&
+    process.env.OPENCLAW_PRIMARY_SECRETS_BACKEND === "bitwarden-secrets-manager"
+  );
+}
+
+function mcpOAuthAuthorizationRequiredMessage(serverName: string): string {
+  if (shouldUseSharedBwsKrispRepairHint(serverName)) {
+    return `MCP server "${serverName}" is not authorized with the shared BWS OAuth store. Repair OpenClaw Krisp connector state and run a sample meeting/transcript smoke test; do not ask the employee to run OAuth login.`;
+  }
+  return `MCP server "${serverName}" requires OAuth authorization. Run openclaw mcp login ${serverName}.`;
+}
+
 function resolveTokenExpiresAt(tokens: OAuthTokens): number | undefined {
   const expiresIn = tokens.expires_in;
   return typeof expiresIn === "number" && Number.isFinite(expiresIn)
@@ -91,9 +106,7 @@ export function createMcpOAuthClientProvider(params: {
     updateMcpOAuthStore(storeKey, update, assertOwnedInTransaction);
   const assertAuthorizationRedirectAllowed = () => {
     if (params.allowAuthorizationRedirect !== true) {
-      throw new Error(
-        `MCP server "${params.identity.serverName}" requires OAuth authorization. Run openclaw mcp login ${params.identity.serverName}.`,
-      );
+      throw new Error(mcpOAuthAuthorizationRequiredMessage(params.identity.serverName));
     }
   };
   return {

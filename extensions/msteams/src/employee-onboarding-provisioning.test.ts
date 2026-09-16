@@ -6,9 +6,12 @@ import {
   createMSTeamsEmployeeOnboardingExecutionReadinessProof,
   createMSTeamsEmployeeOnboardingAdminTransition,
   createMSTeamsEmployeeOnboardingAdminDryRun,
+  diagnoseMSTeamsEmployeeKrispConnectorConfig,
+  diagnoseMSTeamsEmployeeKrispRuntimeReadiness,
   diagnoseMSTeamsEmployeeM365PromptSurfaceConfig,
   diagnoseMSTeamsEmployeeSalesforceConnectorConfig,
   diagnoseMSTeamsEmployeeSalesforceRuntimeReadiness,
+  ensureMSTeamsEmployeeKrispConnectorConfig,
   ensureMSTeamsEmployeeM365PromptSurfaceConfig,
   ensureMSTeamsEmployeeSalesforceConnectorConfig,
   redactMSTeamsEmployeeOnboardingExecutionReadinessProof,
@@ -151,6 +154,20 @@ describe("msteams employee onboarding provisioning dry run", () => {
             autoRepair: "add-missing-mcp-server-and-tool-allow-entries",
             explicitDisablePolicy: "block-and-report",
           },
+          krispConnector: {
+            requiredMcpServerId: "krisp",
+            requiredToolAllowEntries: ["bundle-mcp", "krisp__*"],
+            requiredSharedSecretKeys: [
+              "openclaw/connectors/krisp/oauthStoreJson",
+              "openclaw/connectors/krisp/mcpServerConfig",
+              "openclaw/connectors/krisp/serviceIdentity",
+            ],
+            credentialModel: "shared-bws-oauth-store",
+            employeeAuthPolicy: "never-request-employee-oauth",
+            smokeProof: "sample-meeting-and-transcript-status",
+            autoRepair: "add-missing-mcp-server-and-tool-allow-entries",
+            explicitDisablePolicy: "block-and-report",
+          },
         },
       },
     });
@@ -170,6 +187,12 @@ describe("msteams employee onboarding provisioning dry run", () => {
     );
     expect(dryRun.validation).toContain(
       "employee config includes Salesforce MCP server and salesforce tool allow entries before Salesforce is considered ready",
+    );
+    expect(dryRun.validation).toContain(
+      "employee config includes Krisp MCP server, BWS-backed OAuth store access, and Krisp tool exposure before Krisp is considered ready",
+    );
+    expect(dryRun.validation).toContain(
+      "Krisp employee-facing success confirms access granted with a sample meeting and transcript status instead of OAuth login instructions",
     );
   });
 
@@ -387,6 +410,118 @@ describe("msteams employee onboarding provisioning dry run", () => {
       presentCredentialMountTargets: ["/home/node/.sf", "/home/node/.sfdx"],
       missingCredentialMountTargets: [],
     });
+  });
+
+  it("repairs missing Krisp MCP server and tool exposure without asking for employee OAuth", () => {
+    const config = {
+      agents: {
+        entries: {
+          main: {
+            tools: {
+              alsoAllow: ["read"],
+            },
+          },
+        },
+      },
+      secrets: {
+        providers: {
+          bws: { source: "exec" },
+        },
+      },
+    };
+
+    expect(diagnoseMSTeamsEmployeeKrispConnectorConfig(config)).toMatchObject({
+      status: "repairable",
+      requiredMcpServerId: "krisp",
+      mcpServerPresent: false,
+      missingToolAllowEntries: ["bundle-mcp", "krisp__*"],
+      requiredSharedSecretKeys: [
+        "openclaw/connectors/krisp/oauthStoreJson",
+        "openclaw/connectors/krisp/mcpServerConfig",
+        "openclaw/connectors/krisp/serviceIdentity",
+      ],
+    });
+
+    const repaired = ensureMSTeamsEmployeeKrispConnectorConfig(config);
+
+    expect(repaired).toMatchObject({
+      status: {
+        status: "ready",
+        requiredMcpServerId: "krisp",
+        mcpServerPresent: true,
+        missingToolAllowEntries: [],
+      },
+      addedMcpServer: true,
+      addedToolAllowEntries: ["bundle-mcp", "krisp__*"],
+      sideEffects: ["employee-config-krisp-connector-repair"],
+    });
+    expect(repaired.config.mcp.servers.krisp).toEqual({
+      url: "https://mcp.krisp.ai/mcp",
+      transport: "streamable-http",
+      auth: "oauth",
+      connectionTimeoutMs: 45_000,
+      requestTimeoutMs: 120_000,
+    });
+    expect(repaired.config.agents.entries.main.tools.alsoAllow).toEqual([
+      "read",
+      "bundle-mcp",
+      "krisp__*",
+    ]);
+    expect(repaired.config.secrets).toBe(config.secrets);
+  });
+
+  it("requires Krisp shared BWS OAuth store proof and sample transcript smoke before ready", () => {
+    const repaired = ensureMSTeamsEmployeeKrispConnectorConfig({
+      agents: {
+        entries: {
+          main: {},
+        },
+      },
+    });
+
+    const missingBws = diagnoseMSTeamsEmployeeKrispRuntimeReadiness({
+      config: repaired.config,
+      resolvedSharedSecretKeys: [],
+      pendingOAuthAuthorizationCount: 1,
+    });
+
+    expect(missingBws).toMatchObject({
+      status: "repairable",
+      connector: {
+        status: "ready",
+      },
+      missingSharedSecretKeys: [
+        "openclaw/connectors/krisp/oauthStoreJson",
+        "openclaw/connectors/krisp/mcpServerConfig",
+        "openclaw/connectors/krisp/serviceIdentity",
+      ],
+      pendingOAuthAuthorizationCount: 1,
+    });
+    expect(missingBws.messages).toContain(
+      "Krisp has 1 pending local OAuth authorization(s); restore the shared BWS OAuth store instead of asking the employee to log in.",
+    );
+
+    const ready = diagnoseMSTeamsEmployeeKrispRuntimeReadiness({
+      config: repaired.config,
+      resolvedSharedSecretKeys: [
+        "openclaw/connectors/krisp/oauthStoreJson",
+        "openclaw/connectors/krisp/mcpServerConfig",
+        "openclaw/connectors/krisp/serviceIdentity",
+      ],
+      sampleMeetingName: "[EXTERNAL] Fulcrum x Elastic Account Sync",
+      sampleTranscriptStatus: "uploaded",
+    });
+
+    expect(ready).toMatchObject({
+      status: "ready",
+      missingSharedSecretKeys: [],
+      pendingOAuthAuthorizationCount: 0,
+      sampleMeetingName: "[EXTERNAL] Fulcrum x Elastic Account Sync",
+      sampleTranscriptStatus: "uploaded",
+    });
+    expect(ready.messages).toContain(
+      'Krisp smoke proof found meeting "[EXTERNAL] Fulcrum x Elastic Account Sync" with transcript status uploaded.',
+    );
   });
 
   it("allows onboarding to bind a pre-created employee BWS project name", () => {
@@ -689,6 +824,20 @@ describe("msteams employee onboarding provisioning dry run", () => {
           explicitDisablePolicy: "block-and-report",
           passed: true,
         },
+        krispConnector: {
+          requiredMcpServerId: "krisp",
+          requiredToolAllowEntries: ["bundle-mcp", "krisp__*"],
+          requiredSharedSecretKeys: [
+            "openclaw/connectors/krisp/oauthStoreJson",
+            "openclaw/connectors/krisp/mcpServerConfig",
+            "openclaw/connectors/krisp/serviceIdentity",
+          ],
+          credentialModel: "shared-bws-oauth-store",
+          employeeAuthPolicy: "never-request-employee-oauth",
+          smokeProof: "sample-meeting-and-transcript-status",
+          explicitDisablePolicy: "block-and-report",
+          passed: true,
+        },
       },
       approvalPacket: {
         required: true,
@@ -710,6 +859,12 @@ describe("msteams employee onboarding provisioning dry run", () => {
     expect(proof.containerValidation).toContain(
       "employee Salesforce credential bind mounts are present before Salesforce is considered ready",
     );
+    expect(proof.containerValidation).toContain(
+      "employee Krisp connector guard passes with shared BWS OAuth store access before Krisp is considered ready",
+    );
+    expect(proof.containerValidation).toContain(
+      "employee Krisp smoke proof names one sample meeting and transcript status without exposing transcript content",
+    );
     expect(proof.approvalPacket.expectedChanges).toContain(
       "employee BWS project openclaw-second-pilot",
     );
@@ -724,6 +879,9 @@ describe("msteams employee onboarding provisioning dry run", () => {
     );
     expect(proof.approvalPacket.expectedChanges).toContain(
       "employee Salesforce credential mounts for /home/node/.sf and /home/node/.sfdx",
+    );
+    expect(proof.approvalPacket.expectedChanges).toContain(
+      "employee Krisp connector guard for shared BWS OAuth store and smoke proof",
     );
     expect(proof.approvalPacket.rollbackProof).toContain(dryRun.commands.rollbackRoute);
     expect(proof.hostBackedMounts.required).toContain(

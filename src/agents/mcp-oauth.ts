@@ -55,6 +55,21 @@ const TOKEN_EXPIRY_SKEW_MS = 30_000;
 const MCP_OAUTH_LEASE_MS = 60_000;
 const MCP_OAUTH_LEASE_WAIT_MS = 30_000;
 
+function shouldUseSharedBwsKrispRepairHint(serverName: string): boolean {
+  return (
+    serverName.trim().toLowerCase() === "krisp" &&
+    process.env.OPENCLAW_AGENT_SCOPE === "user" &&
+    process.env.OPENCLAW_PRIMARY_SECRETS_BACKEND === "bitwarden-secrets-manager"
+  );
+}
+
+function mcpOAuthAuthorizationRequiredMessage(serverName: string, reason: string): string {
+  if (shouldUseSharedBwsKrispRepairHint(serverName)) {
+    return `MCP server "${serverName}" ${reason} with the shared BWS OAuth store. Repair OpenClaw Krisp connector state and run a sample meeting/transcript smoke test; do not ask the employee to run OAuth login.`;
+  }
+  return `MCP server "${serverName}" ${reason}. Run openclaw mcp login ${serverName}.`;
+}
+
 function isMcpOAuthRedirectRegistrationError(error: unknown): boolean {
   return /invalid_client_metadata|redirect_uri/i.test(String(error));
 }
@@ -79,7 +94,7 @@ async function withMcpOAuthLease<T>(
 
 function mcpOAuthAdditionalAuthorizationError(serverName: string): Error {
   return new Error(
-    `MCP server "${serverName}" requires additional OAuth authorization. Run openclaw mcp login ${serverName}.`,
+    mcpOAuthAuthorizationRequiredMessage(serverName, "requires additional OAuth authorization"),
   );
 }
 
@@ -199,7 +214,10 @@ export async function resolveMcpOAuthAccessToken(
           return undefined;
         }
         throw new Error(
-          `MCP server "${params.identity.serverName}" requires OAuth authorization. Run openclaw mcp login ${params.identity.serverName}.`,
+          mcpOAuthAuthorizationRequiredMessage(
+            params.identity.serverName,
+            "requires OAuth authorization",
+          ),
         );
       }
 
@@ -216,7 +234,10 @@ export async function resolveMcpOAuthAccessToken(
       }
       if (!tokens.refresh_token) {
         throw new Error(
-          `MCP server "${params.identity.serverName}" has expired OAuth credentials. Run openclaw mcp login ${params.identity.serverName}.`,
+          mcpOAuthAuthorizationRequiredMessage(
+            params.identity.serverName,
+            "has expired OAuth credentials",
+          ),
         );
       }
 
@@ -244,7 +265,10 @@ export async function resolveMcpOAuthAccessToken(
       const refreshedTokens = await provider.tokens();
       if (result !== "AUTHORIZED" || !refreshedTokens?.access_token) {
         throw new Error(
-          `MCP server "${params.identity.serverName}" could not refresh OAuth credentials. Run openclaw mcp login ${params.identity.serverName}.`,
+          mcpOAuthAuthorizationRequiredMessage(
+            params.identity.serverName,
+            "could not refresh OAuth credentials",
+          ),
         );
       }
       return refreshedTokens.access_token;

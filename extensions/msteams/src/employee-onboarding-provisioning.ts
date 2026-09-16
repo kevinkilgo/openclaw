@@ -95,6 +95,16 @@ export type MSTeamsEmployeeOnboardingProvisioningPlan = {
         autoRepair: "add-missing-mcp-server-and-tool-allow-entries";
         explicitDisablePolicy: "block-and-report";
       };
+      krispConnector: {
+        requiredMcpServerId: typeof MSTEAMS_EMPLOYEE_KRISP_MCP_SERVER_ID;
+        requiredToolAllowEntries: MSTeamsEmployeeKrispToolAllowEntry[];
+        requiredSharedSecretKeys: MSTeamsEmployeeKrispSharedSecretKey[];
+        credentialModel: "shared-bws-oauth-store";
+        employeeAuthPolicy: "never-request-employee-oauth";
+        smokeProof: "sample-meeting-and-transcript-status";
+        autoRepair: "add-missing-mcp-server-and-tool-allow-entries";
+        explicitDisablePolicy: "block-and-report";
+      };
     };
   };
   commands: {
@@ -236,6 +246,58 @@ export type MSTeamsEmployeeSalesforceRuntimeReadinessStatus = {
   messages: string[];
 };
 
+export const MSTEAMS_EMPLOYEE_KRISP_MCP_SERVER_ID = "krisp" as const;
+
+export const REQUIRED_MSTEAMS_EMPLOYEE_KRISP_TOOL_ALLOW_ENTRIES = [
+  "bundle-mcp",
+  "krisp__*",
+] as const;
+
+export type MSTeamsEmployeeKrispToolAllowEntry =
+  (typeof REQUIRED_MSTEAMS_EMPLOYEE_KRISP_TOOL_ALLOW_ENTRIES)[number];
+
+export const REQUIRED_MSTEAMS_EMPLOYEE_KRISP_SHARED_SECRET_KEYS = [
+  "openclaw/connectors/krisp/oauthStoreJson",
+  "openclaw/connectors/krisp/mcpServerConfig",
+  "openclaw/connectors/krisp/serviceIdentity",
+] as const;
+
+export type MSTeamsEmployeeKrispSharedSecretKey =
+  (typeof REQUIRED_MSTEAMS_EMPLOYEE_KRISP_SHARED_SECRET_KEYS)[number];
+
+export type MSTeamsEmployeeKrispConnectorStatus = {
+  status: "ready" | "repairable" | "blocked";
+  requiredMcpServerId: typeof MSTEAMS_EMPLOYEE_KRISP_MCP_SERVER_ID;
+  mcpServerPresent: boolean;
+  mcpServerExplicitlyDisabled: boolean;
+  launcherShapeReady: boolean;
+  requiredToolAllowEntries: MSTeamsEmployeeKrispToolAllowEntry[];
+  presentToolAllowEntries: MSTeamsEmployeeKrispToolAllowEntry[];
+  missingToolAllowEntries: MSTeamsEmployeeKrispToolAllowEntry[];
+  requiredSharedSecretKeys: MSTeamsEmployeeKrispSharedSecretKey[];
+  messages: string[];
+};
+
+export type MSTeamsEmployeeKrispConnectorRepairResult<TConfig> = {
+  config: TConfig;
+  status: MSTeamsEmployeeKrispConnectorStatus;
+  addedMcpServer: boolean;
+  addedToolAllowEntries: MSTeamsEmployeeKrispToolAllowEntry[];
+  sideEffects: [] | ["employee-config-krisp-connector-repair"];
+};
+
+export type MSTeamsEmployeeKrispRuntimeReadinessStatus = {
+  status: "ready" | "repairable" | "blocked";
+  connector: MSTeamsEmployeeKrispConnectorStatus;
+  requiredSharedSecretKeys: MSTeamsEmployeeKrispSharedSecretKey[];
+  resolvedSharedSecretKeys: MSTeamsEmployeeKrispSharedSecretKey[];
+  missingSharedSecretKeys: MSTeamsEmployeeKrispSharedSecretKey[];
+  pendingOAuthAuthorizationCount: number;
+  sampleMeetingName?: string;
+  sampleTranscriptStatus?: string;
+  messages: string[];
+};
+
 export type MSTeamsEmployeeOnboardingExecutionReadinessProof = {
   dryRun: true;
   status: "ready" | "blocked";
@@ -271,6 +333,16 @@ export type MSTeamsEmployeeOnboardingExecutionReadinessProof = {
     salesforceConnector: {
       requiredMcpServerId: typeof MSTEAMS_EMPLOYEE_SALESFORCE_MCP_SERVER_ID;
       requiredToolAllowEntries: MSTeamsEmployeeSalesforceToolAllowEntry[];
+      explicitDisablePolicy: "block-and-report";
+      passed: true;
+    };
+    krispConnector: {
+      requiredMcpServerId: typeof MSTEAMS_EMPLOYEE_KRISP_MCP_SERVER_ID;
+      requiredToolAllowEntries: MSTeamsEmployeeKrispToolAllowEntry[];
+      requiredSharedSecretKeys: MSTeamsEmployeeKrispSharedSecretKey[];
+      credentialModel: "shared-bws-oauth-store";
+      employeeAuthPolicy: "never-request-employee-oauth";
+      smokeProof: "sample-meeting-and-transcript-status";
       explicitDisablePolicy: "block-and-report";
       passed: true;
     };
@@ -399,9 +471,7 @@ const DEFAULT_BWS_RESOLVER_PATH = "/home/openclaw/config/openclaw-bws-resolver.m
 const SHARED_CONNECTOR_SECRET_KEYS = [
   "openclaw/connectors/salesforce/sfdxAuthJson",
   "openclaw/connectors/salesforce/defaultTargetOrg",
-  "openclaw/connectors/krisp/oauthStoreJson",
-  "openclaw/connectors/krisp/mcpServerConfig",
-  "openclaw/connectors/krisp/serviceIdentity",
+  ...REQUIRED_MSTEAMS_EMPLOYEE_KRISP_SHARED_SECRET_KEYS,
 ] as const;
 
 const EMPLOYEE_M365_PROMPT_SURFACE_CONFIG_GUARD = {
@@ -413,6 +483,16 @@ const EMPLOYEE_M365_PROMPT_SURFACE_CONFIG_GUARD = {
   salesforceConnector: {
     requiredMcpServerId: MSTEAMS_EMPLOYEE_SALESFORCE_MCP_SERVER_ID,
     requiredToolAllowEntries: [...REQUIRED_MSTEAMS_EMPLOYEE_SALESFORCE_TOOL_ALLOW_ENTRIES],
+    autoRepair: "add-missing-mcp-server-and-tool-allow-entries",
+    explicitDisablePolicy: "block-and-report",
+  },
+  krispConnector: {
+    requiredMcpServerId: MSTEAMS_EMPLOYEE_KRISP_MCP_SERVER_ID,
+    requiredToolAllowEntries: [...REQUIRED_MSTEAMS_EMPLOYEE_KRISP_TOOL_ALLOW_ENTRIES],
+    requiredSharedSecretKeys: [...REQUIRED_MSTEAMS_EMPLOYEE_KRISP_SHARED_SECRET_KEYS],
+    credentialModel: "shared-bws-oauth-store",
+    employeeAuthPolicy: "never-request-employee-oauth",
+    smokeProof: "sample-meeting-and-transcript-status",
     autoRepair: "add-missing-mcp-server-and-tool-allow-entries",
     explicitDisablePolicy: "block-and-report",
   },
@@ -728,6 +808,192 @@ export function diagnoseMSTeamsEmployeeSalesforceRuntimeReadiness(
     ],
     presentCredentialMountTargets,
     missingCredentialMountTargets,
+    messages,
+  };
+}
+
+function createDefaultMSTeamsEmployeeKrispMcpServerConfig(): Record<string, unknown> {
+  return {
+    url: "https://mcp.krisp.ai/mcp",
+    transport: "streamable-http",
+    auth: "oauth",
+    connectionTimeoutMs: 45_000,
+    requestTimeoutMs: 120_000,
+  };
+}
+
+function isApprovedMSTeamsEmployeeKrispMcpLauncher(entry: unknown): boolean {
+  if (!isRecord(entry)) {
+    return false;
+  }
+  return (
+    entry.url === "https://mcp.krisp.ai/mcp" &&
+    entry.transport === "streamable-http" &&
+    entry.auth === "oauth" &&
+    typeof entry.connectionTimeoutMs === "number" &&
+    entry.connectionTimeoutMs >= 30_000 &&
+    typeof entry.requestTimeoutMs === "number" &&
+    entry.requestTimeoutMs >= 60_000
+  );
+}
+
+export function diagnoseMSTeamsEmployeeKrispConnectorConfig(
+  config: unknown,
+): MSTeamsEmployeeKrispConnectorStatus {
+  const servers = configMcpServers(config);
+  const server = servers[MSTEAMS_EMPLOYEE_KRISP_MCP_SERVER_ID];
+  const tools = configMainAgentTools(config);
+  const alsoAllow = stringArray(tools.alsoAllow);
+  const presentToolAllowEntries = REQUIRED_MSTEAMS_EMPLOYEE_KRISP_TOOL_ALLOW_ENTRIES.filter(
+    (entry) => alsoAllow.includes(entry),
+  );
+  const missingToolAllowEntries = REQUIRED_MSTEAMS_EMPLOYEE_KRISP_TOOL_ALLOW_ENTRIES.filter(
+    (entry) => !alsoAllow.includes(entry),
+  );
+  const mcpServerPresent = isRecord(server);
+  const mcpServerExplicitlyDisabled = isRecord(server) && server.enabled === false;
+  const launcherShapeReady = isApprovedMSTeamsEmployeeKrispMcpLauncher(server);
+  const messages = [
+    ...(!mcpServerPresent ? ["Missing Krisp MCP server config."] : []),
+    ...(mcpServerExplicitlyDisabled ? ["Krisp MCP server is explicitly disabled."] : []),
+    ...(mcpServerPresent && !mcpServerExplicitlyDisabled && !launcherShapeReady
+      ? ["Krisp MCP server launcher shape is not the approved shared BWS OAuth shape."]
+      : []),
+    ...(missingToolAllowEntries.length > 0
+      ? [`Missing Krisp tool allow entries: ${missingToolAllowEntries.join(", ")}`]
+      : []),
+  ];
+
+  return {
+    status: mcpServerExplicitlyDisabled
+      ? "blocked"
+      : !mcpServerPresent || !launcherShapeReady || missingToolAllowEntries.length > 0
+        ? "repairable"
+        : "ready",
+    requiredMcpServerId: MSTEAMS_EMPLOYEE_KRISP_MCP_SERVER_ID,
+    mcpServerPresent,
+    mcpServerExplicitlyDisabled,
+    launcherShapeReady,
+    requiredToolAllowEntries: [...REQUIRED_MSTEAMS_EMPLOYEE_KRISP_TOOL_ALLOW_ENTRIES],
+    presentToolAllowEntries,
+    missingToolAllowEntries,
+    requiredSharedSecretKeys: [...REQUIRED_MSTEAMS_EMPLOYEE_KRISP_SHARED_SECRET_KEYS],
+    messages: messages.length > 0 ? messages : ["Krisp MCP connector config is ready."],
+  };
+}
+
+export function ensureMSTeamsEmployeeKrispConnectorConfig<TConfig extends Record<string, unknown>>(
+  config: TConfig,
+): MSTeamsEmployeeKrispConnectorRepairResult<TConfig> {
+  const status = diagnoseMSTeamsEmployeeKrispConnectorConfig(config);
+  if (status.status !== "repairable") {
+    return {
+      config,
+      status,
+      addedMcpServer: false,
+      addedToolAllowEntries: [],
+      sideEffects: [],
+    };
+  }
+
+  const mcp = isRecord(config.mcp) ? config.mcp : {};
+  const servers = isRecord(mcp.servers) ? mcp.servers : {};
+  const agents = isRecord(config.agents) ? config.agents : {};
+  const entries = isRecord(agents.entries) ? agents.entries : {};
+  const main = isRecord(entries.main) ? entries.main : {};
+  const tools = isRecord(main.tools) ? main.tools : {};
+  const alsoAllow = stringArray(tools.alsoAllow);
+  const addedToolAllowEntries = status.missingToolAllowEntries;
+  const repairedConfig = {
+    ...config,
+    mcp: {
+      ...mcp,
+      servers: {
+        ...servers,
+        [MSTEAMS_EMPLOYEE_KRISP_MCP_SERVER_ID]: status.launcherShapeReady
+          ? servers[MSTEAMS_EMPLOYEE_KRISP_MCP_SERVER_ID]
+          : createDefaultMSTeamsEmployeeKrispMcpServerConfig(),
+      },
+    },
+    agents: {
+      ...agents,
+      entries: {
+        ...entries,
+        main: {
+          ...main,
+          tools: {
+            ...tools,
+            alsoAllow: [...alsoAllow, ...addedToolAllowEntries],
+          },
+        },
+      },
+    },
+  };
+
+  return {
+    // SAFETY: The repair preserves unknown config fields and only fills the Krisp MCP server and main-agent tool allow entries.
+    config: repairedConfig as TConfig,
+    status: diagnoseMSTeamsEmployeeKrispConnectorConfig(repairedConfig),
+    addedMcpServer: !status.mcpServerPresent || !status.launcherShapeReady,
+    addedToolAllowEntries,
+    sideEffects: ["employee-config-krisp-connector-repair"],
+  };
+}
+
+export function diagnoseMSTeamsEmployeeKrispRuntimeReadiness(params: {
+  config: unknown;
+  resolvedSharedSecretKeys: readonly string[];
+  pendingOAuthAuthorizationCount?: number;
+  sampleMeetingName?: string;
+  sampleTranscriptStatus?: string;
+}): MSTeamsEmployeeKrispRuntimeReadinessStatus {
+  const connector = diagnoseMSTeamsEmployeeKrispConnectorConfig(params.config);
+  const resolvedSharedSecretKeys = REQUIRED_MSTEAMS_EMPLOYEE_KRISP_SHARED_SECRET_KEYS.filter(
+    (key) => params.resolvedSharedSecretKeys.includes(key),
+  );
+  const missingSharedSecretKeys = REQUIRED_MSTEAMS_EMPLOYEE_KRISP_SHARED_SECRET_KEYS.filter(
+    (key) => !params.resolvedSharedSecretKeys.includes(key),
+  );
+  const pendingOAuthAuthorizationCount = params.pendingOAuthAuthorizationCount ?? 0;
+  const sampleMeetingName = params.sampleMeetingName?.trim();
+  const sampleTranscriptStatus = params.sampleTranscriptStatus?.trim();
+  const sampleProofReady = Boolean(sampleMeetingName && sampleTranscriptStatus);
+  const messages = [
+    ...connector.messages,
+    ...(missingSharedSecretKeys.length > 0
+      ? [`Missing Krisp shared BWS SecretRefs: ${missingSharedSecretKeys.join(", ")}`]
+      : ["Krisp shared BWS OAuth/config/service SecretRefs resolve without exposing values."]),
+    ...(pendingOAuthAuthorizationCount > 0
+      ? [
+          `Krisp has ${pendingOAuthAuthorizationCount} pending local OAuth authorization(s); restore the shared BWS OAuth store instead of asking the employee to log in.`,
+        ]
+      : ["Krisp has no pending local OAuth authorization rows."]),
+    ...(sampleProofReady
+      ? [
+          `Krisp smoke proof found meeting "${sampleMeetingName}" with transcript status ${sampleTranscriptStatus}.`,
+        ]
+      : [
+          "Krisp smoke proof must pull a sample meeting and transcript status before employee-facing success.",
+        ]),
+  ];
+
+  return {
+    status:
+      connector.status === "blocked"
+        ? "blocked"
+        : connector.status === "repairable" ||
+            missingSharedSecretKeys.length > 0 ||
+            pendingOAuthAuthorizationCount > 0 ||
+            !sampleProofReady
+          ? "repairable"
+          : "ready",
+    connector,
+    requiredSharedSecretKeys: [...REQUIRED_MSTEAMS_EMPLOYEE_KRISP_SHARED_SECRET_KEYS],
+    resolvedSharedSecretKeys,
+    missingSharedSecretKeys,
+    pendingOAuthAuthorizationCount,
+    ...(sampleMeetingName ? { sampleMeetingName } : {}),
+    ...(sampleTranscriptStatus ? { sampleTranscriptStatus } : {}),
     messages,
   };
 }
@@ -1048,6 +1314,8 @@ export function createMSTeamsEmployeeOnboardingProvisioningDryRun(params: {
       "employee config includes device-pair and microsoft prompt-surface plugin entries for secure M365 auth handoff",
       "employee config includes Salesforce MCP server and salesforce tool allow entries before Salesforce is considered ready",
       "employee stack includes Salesforce credential mounts for /home/node/.sf and /home/node/.sfdx before Salesforce is considered ready",
+      "employee config includes Krisp MCP server, BWS-backed OAuth store access, and Krisp tool exposure before Krisp is considered ready",
+      "Krisp employee-facing success confirms access granted with a sample meeting and transcript status instead of OAuth login instructions",
       "employee-agent endpoint ports remain unpublished",
       "new Teams direct peer routes to the new employee agent",
       "Kevin Teams direct peer still routes to kevin-k",
@@ -1218,6 +1486,8 @@ export function createMSTeamsEmployeeOnboardingExecutionReadinessProof(params: {
       "employee config prompt-surface guard passes before M365 auth is considered ready",
       "employee Salesforce connector guard passes before Salesforce is considered ready",
       "employee Salesforce credential bind mounts are present before Salesforce is considered ready",
+      "employee Krisp connector guard passes with shared BWS OAuth store access before Krisp is considered ready",
+      "employee Krisp smoke proof names one sample meeting and transcript status without exposing transcript content",
       "production health validation remains green",
     ],
     configGuard: {
@@ -1229,6 +1499,16 @@ export function createMSTeamsEmployeeOnboardingExecutionReadinessProof(params: {
       salesforceConnector: {
         requiredMcpServerId: MSTEAMS_EMPLOYEE_SALESFORCE_MCP_SERVER_ID,
         requiredToolAllowEntries: [...REQUIRED_MSTEAMS_EMPLOYEE_SALESFORCE_TOOL_ALLOW_ENTRIES],
+        explicitDisablePolicy: "block-and-report",
+        passed: true,
+      },
+      krispConnector: {
+        requiredMcpServerId: MSTEAMS_EMPLOYEE_KRISP_MCP_SERVER_ID,
+        requiredToolAllowEntries: [...REQUIRED_MSTEAMS_EMPLOYEE_KRISP_TOOL_ALLOW_ENTRIES],
+        requiredSharedSecretKeys: [...REQUIRED_MSTEAMS_EMPLOYEE_KRISP_SHARED_SECRET_KEYS],
+        credentialModel: "shared-bws-oauth-store",
+        employeeAuthPolicy: "never-request-employee-oauth",
+        smokeProof: "sample-meeting-and-transcript-status",
         explicitDisablePolicy: "block-and-report",
         passed: true,
       },
@@ -1248,6 +1528,7 @@ export function createMSTeamsEmployeeOnboardingExecutionReadinessProof(params: {
         "employee config prompt-surface guard for secure M365 auth handoff",
         "employee Salesforce connector guard for MCP server and tool policy exposure",
         "employee Salesforce credential mounts for /home/node/.sf and /home/node/.sfdx",
+        "employee Krisp connector guard for shared BWS OAuth store and smoke proof",
         "one exact Teams direct-peer route binding",
       ],
       rollbackProof: [
