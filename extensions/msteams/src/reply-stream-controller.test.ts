@@ -545,6 +545,23 @@ describe("createTeamsReplyStreamController", () => {
     expect(stream.close).not.toHaveBeenCalled();
   });
 
+  it("bypasses native progress streaming for long final text so block delivery can chunk", async () => {
+    const stream = makeStream();
+    const ctrl = createTeamsReplyStreamController({
+      allowProviderPreview: true,
+      conversationType: "personal",
+      context: makeContext(stream),
+      feedbackLoopEnabled: false,
+      msteamsConfig: { streaming: { mode: "progress" } } as never,
+    });
+    const longFinal = "x".repeat(4_001);
+
+    expect(ctrl.preparePayload({ text: longFinal })).toEqual({ text: longFinal });
+    expect(stream.emit).not.toHaveBeenCalled();
+    expect(await ctrl.finalize()).toEqual({ visibleReplySent: false });
+    expect(stream.close).not.toHaveBeenCalled();
+  });
+
   it("streams compact Teams progress lines when tool progress is enabled", async () => {
     vi.useFakeTimers();
     const stream = makeStream();

@@ -42,6 +42,8 @@ type DeferredReplacementEntry =
   | { kind: "payload"; payload: ReplyPayload }
   | { kind: "replacement"; payload: ReplyPayload };
 
+const MSTEAMS_NATIVE_STREAM_TEXT_LIMIT = 4000;
+
 // The SDK throws StreamCancelledError synchronously from stream.emit/update
 // when the user pressed Stop in Teams (Teams replies 403 to the next chunk
 // update and the SDK flips _canceled). Match by `name` rather than importing
@@ -204,6 +206,18 @@ export function createTeamsReplyStreamController(params: {
     ),
     channelData: params.feedbackLoopEnabled ? { feedbackLoopEnabled: true } : {},
   });
+
+  const shouldBypassNativeStreamForFinalPayload = (payload: ReplyPayload): boolean => {
+    if (
+      streamMode !== "progress" ||
+      nativeDispatchStarted ||
+      typeof payload.text !== "string" ||
+      !payload.text
+    ) {
+      return false;
+    }
+    return (finalStreamActivity(payload.text).text?.length ?? 0) > MSTEAMS_NATIVE_STREAM_TEXT_LIMIT;
+  };
 
   const deferredReplacementLogicalContent = (): string | undefined => {
     const content = deferredReplacementEntries
@@ -386,6 +400,9 @@ export function createTeamsReplyStreamController(params: {
       }
       if (payload.text) {
         progressDraft.markFinalReplyStarted();
+      }
+      if (shouldBypassNativeStreamForFinalPayload(payload)) {
+        return payload;
       }
       if (replacementSettlementPending) {
         if (!replacementFinalPending) {
