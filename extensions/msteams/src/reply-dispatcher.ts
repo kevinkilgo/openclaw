@@ -93,8 +93,8 @@ export function createMSTeamsReplyDispatcher(params: {
   // activity ceiling. Keep post-native continuation messages intentionally
   // conservative so long replies stay inside Teams chat instead of requiring
   // users to open a file/card.
-  const LONG_TEXT_CONTINUATION_THRESHOLD = 2_500;
-  const LONG_TEXT_CONTINUATION_CHUNK_LIMIT = 900;
+  const LONG_TEXT_CONTINUATION_THRESHOLD = 1_400;
+  const LONG_TEXT_CONTINUATION_CHUNK_LIMIT = 700;
 
   // Forward references: sendTypingIndicator is built before the stream
   // controller exists, but the keepalive tick needs to check stream state so
@@ -362,7 +362,7 @@ export function createMSTeamsReplyDispatcher(params: {
   };
 
   const renderReplyPayload = (payload: ReplyPayload) => {
-    return renderReplyPayloadsToMessages([payload], {
+    return renderReplyPayloadsToMessages(createTeamsContinuationPayloads(payload), {
       textChunkLimit: params.textLimit,
       chunkText: true,
       mediaMode: "split",
