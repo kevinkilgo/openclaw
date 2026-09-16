@@ -366,9 +366,9 @@ export function renderCardDetailsPanel(props: WorkboardProps) {
                       placeholder=${t("workboard.detailNotePlaceholder")}
                       .value=${state.detailCommentBody}
                       @input=${(event: InputEvent) => {
-                        state.detailCommentBody = (
-                          event.currentTarget as HTMLTextAreaElement
-                        ).value;
+                        state.detailCommentBody =
+                          // SAFETY: This input handler is attached directly to the note textarea.
+                          (event.currentTarget as HTMLTextAreaElement).value;
                         props.onRequestUpdate?.();
                       }}
                     ></textarea>

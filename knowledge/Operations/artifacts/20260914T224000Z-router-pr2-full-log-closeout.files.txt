@@ -1,0 +1,16 @@
+knowledge/Operations/artifacts/20260914T224000Z-router-pr2-full-log-closeout/metadata.env
+knowledge/Operations/artifacts/20260914T224000Z-router-pr2-full-log-closeout/router-container-inspect.json
+knowledge/Operations/artifacts/20260914T224000Z-router-pr2-full-log-closeout/router-health.json
+knowledge/Operations/artifacts/20260914T224000Z-router-pr2-full-log-closeout/router-http-health.txt
+knowledge/Operations/artifacts/20260914T224000Z-router-pr2-full-log-closeout/router-image-inspect.json
+knowledge/Operations/artifacts/20260914T224000Z-router-pr2-full-log-closeout/router-service-inspect.txt
+knowledge/Operations/artifacts/20260914T224000Z-router-pr2-full-log-closeout/router-service-ps.txt
+knowledge/Operations/artifacts/20260914T224000Z-router-pr2-full-log-closeout/service-replicas.txt
+knowledge/Operations/artifacts/20260914T224000Z-router-pr2-full-log-closeout/smoke-summary.txt
+knowledge/Operations/artifacts/20260914T224000Z-router-pr2-full-log-closeout/smokes/babbey.jsonl
+knowledge/Operations/artifacts/20260914T224000Z-router-pr2-full-log-closeout/smokes/dmathis.jsonl
+knowledge/Operations/artifacts/20260914T224000Z-router-pr2-full-log-closeout/smokes/hdadabhoy.jsonl
+knowledge/Operations/artifacts/20260914T224000Z-router-pr2-full-log-closeout/smokes/jowen.jsonl
+knowledge/Operations/artifacts/20260914T224000Z-router-pr2-full-log-closeout/smokes/kkilgo.jsonl
+knowledge/Operations/artifacts/20260914T224000Z-router-pr2-full-log-closeout/smokes/rstephens.jsonl
+knowledge/Operations/artifacts/20260914T224000Z-router-pr2-full-log-closeout/summary.md

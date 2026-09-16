@@ -1,0 +1,73 @@
+
+ID:		p646fsv4tgokdengbfagehgbu
+Name:		openclaw-gateway-lanes-prod-swarm_gateway-router
+Labels:
+ com.docker.stack.image=local/openclaw-gateway:2026.8.1-msteams-employee-device-code-hotpatch-20260907a
+ com.docker.stack.namespace=openclaw-gateway-lanes-prod-swarm
+Service Mode:	Replicated
+ Replicas:	1
+UpdateStatus:
+ State:		completed
+ Started:	15 minutes ago
+ Completed:	11 minutes ago
+ Message:	update completed
+Placement:
+ Constraints:	[node.labels.openclaw.role == active]
+UpdateConfig:
+ Parallelism:	1
+ On failure:	pause
+ Monitoring Period: 5s
+ Max failure ratio: 0
+ Update order:      stop-first
+RollbackConfig:
+ Parallelism:	1
+ On failure:	pause
+ Monitoring Period: 5s
+ Max failure ratio: 0
+ Rollback order:    stop-first
+ContainerSpec:
+ Image:		local/openclaw-gateway:2026.8.1-msteams-router-pr2-startup-migration-205be517344-20260914T221000Z
+ Args:		sh -lc export OPENCLAW_GATEWAY_TOKEN=$(cat /run/secrets/gateway_router_token); exec openclaw gateway --port 18789 
+ Env:		OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=1 OPENCLAW_CONFIG_PATH=/home/openclaw/config/openclaw.json OPENCLAW_GATEWAY_PORT=18789 OPENCLAW_GATEWAY_TOKEN_FILE=/run/secrets/gateway_router_token OPENCLAW_STATE_DIR=/home/openclaw/.openclaw 
+Mounts:
+ Target:	/srv/openclaw/data/employee-agents
+  Source:	/srv/openclaw/data/employee-agents
+  ReadOnly:	false
+  Type:		bind
+ Target:	/home/openclaw/config
+  Source:	/srv/openclaw/data/gateway-lanes-prod/configs/gateway-router
+  ReadOnly:	false
+  Type:		bind
+ Target:	/shared/artifacts
+  Source:	/srv/openclaw/data/gateway-lanes-prod/shared/artifacts
+  ReadOnly:	false
+  Type:		bind
+ Target:	/usr/local/bin/clawtop
+  Source:	/srv/openclaw/data/gateway-lanes-prod/shared/bin/clawtop
+  ReadOnly:	true
+  Type:		bind
+ Target:	/shared/task-inputs
+  Source:	/srv/openclaw/data/gateway-lanes-prod/shared/task-inputs
+  ReadOnly:	true
+  Type:		bind
+ Target:	/shared/task-results
+  Source:	/srv/openclaw/data/gateway-lanes-prod/shared/task-results
+  ReadOnly:	false
+  Type:		bind
+ Target:	/home/openclaw/.openclaw
+  Source:	/srv/openclaw/data/gateway-lanes-prod/state/gateway-router/.openclaw
+  ReadOnly:	false
+  Type:		bind
+ Target:	/home/openclaw/workspace
+  Source:	/srv/openclaw/data/gateway-lanes-prod/workspaces/gateway-router
+  ReadOnly:	false
+  Type:		bind
+Secrets:
+ Target:	gateway_router_token
+  Source:	gateway_lanes_prod_gateway_router_token_v1
+ Target:	gateway_lanes_prod_msteams_app_password_v1
+  Source:	gateway_lanes_prod_msteams_app_password_v1
+Resources:
+Networks: a3al0tn01v50qw6l379aj9ctt vgse17dze1erapqoruzf9zc3s 0p74bocv2pagpe75difz65zm6 
+Endpoint Mode:	vip
+

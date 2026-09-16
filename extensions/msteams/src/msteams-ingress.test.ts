@@ -8,7 +8,7 @@ import {
 } from "openclaw/plugin-sdk/channel-ingress-test-runtime";
 import type { ChannelIngressQueue } from "openclaw/plugin-sdk/channel-outbound";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createMSTeamsIngress } from "./msteams-ingress.js";
+import { createMSTeamsIngress, createMSTeamsIngressRetryCleanupDryRun } from "./msteams-ingress.js";
 import { createMSTeamsReplayContext } from "./replay-context.js";
 import { MSTEAMS_REQUEST_TIMEOUT_MS } from "./request-timeout.js";
 import type { MSTeamsTurnContext } from "./sdk-types.js";
@@ -114,6 +114,122 @@ afterEach(() => {
 });
 
 describe("Microsoft Teams durable ingress", () => {
+  it("plans stale ingress retry cleanup without mutating the queue", async () => {
+    const queue = {
+      listClaims: vi.fn(async () => [
+        {
+          id: "stale-activity",
+          channelId: "msteams",
+          accountId: "app-id",
+          queueName: "msteams",
+          payload: {
+            version: 1 as const,
+            receivedAt: 1_000,
+            rawActivity: JSON.stringify(activity({ id: "stale-activity" })),
+          },
+          laneKey: "conversation-1",
+          receivedAt: 1_000,
+          updatedAt: 1_000,
+          attempts: 1,
+          claim: {
+            token: "claim-token",
+            ownerId: "old-worker",
+            claimedAt: 10_000,
+          },
+        },
+        {
+          id: "fresh-activity",
+          channelId: "msteams",
+          accountId: "app-id",
+          queueName: "msteams",
+          payload: {
+            version: 1 as const,
+            receivedAt: 1_000,
+            rawActivity: JSON.stringify(activity({ id: "fresh-activity" })),
+          },
+          laneKey: "conversation-2",
+          receivedAt: 1_000,
+          updatedAt: 1_000,
+          attempts: 1,
+          claim: {
+            token: "fresh-token",
+            ownerId: "live-worker",
+            claimedAt: 19_500,
+          },
+        },
+      ]),
+      listFailed: vi.fn(async () => [
+        {
+          id: "failed-activity",
+          channelId: "msteams",
+          accountId: "app-id",
+          queueName: "msteams",
+          laneKey: "conversation-3",
+          receivedAt: 1_000,
+          updatedAt: 15_000,
+          attempts: 3,
+          failedAt: 15_000,
+          reason: "temporary-dispatch-failed",
+          message: "gateway unavailable",
+        },
+      ]),
+      recoverStaleClaims: vi.fn(),
+      resubmit: vi.fn(),
+      delete: vi.fn(),
+    };
+
+    const plan = await createMSTeamsIngressRetryCleanupDryRun({
+      queue,
+      now: 20_000,
+      staleClaimMs: 5_000,
+    });
+
+    expect(plan).toEqual({
+      dryRun: true,
+      status: "ready",
+      now: 20_000,
+      staleClaimMs: 5_000,
+      staleClaims: [
+        {
+          eventId: "stale-activity",
+          laneKey: "conversation-1",
+          ownerId: "old-worker",
+          claimedAt: 10_000,
+          ageMs: 10_000,
+        },
+      ],
+      failedRetries: [
+        {
+          eventId: "failed-activity",
+          laneKey: "conversation-3",
+          reason: "temporary-dispatch-failed",
+          failedAt: 15_000,
+          ageMs: 5_000,
+        },
+      ],
+      actions: [
+        {
+          kind: "recover-stale-claim",
+          eventId: "stale-activity",
+          laneKey: "conversation-1",
+          ageMs: 10_000,
+        },
+        {
+          kind: "review-failed-retry",
+          eventId: "failed-activity",
+          laneKey: "conversation-3",
+          reason: "temporary-dispatch-failed",
+          ageMs: 5_000,
+        },
+      ],
+      approvalRequired: true,
+      sideEffects: [],
+    });
+    expect(queue.recoverStaleClaims).not.toHaveBeenCalled();
+    expect(queue.resubmit).not.toHaveBeenCalled();
+    expect(queue.delete).not.toHaveBeenCalled();
+  });
+
   it("propagates durable append failure before scheduling dispatch", async () => {
     await withQueue(async (queue) => {
       const appendError = new Error("sqlite unavailable");

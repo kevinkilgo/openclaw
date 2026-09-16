@@ -71,6 +71,12 @@ describe("msteams monitor handler authz", () => {
       shouldHandleTextCommands?: PluginRuntime["channel"]["commands"]["shouldHandleTextCommands"];
       createInboundDebouncer?: PluginRuntime["channel"]["debounce"]["createInboundDebouncer"];
       resolveInboundDebounceMs?: PluginRuntime["channel"]["debounce"]["resolveInboundDebounceMs"];
+      employeeOnboardingStore?: NonNullable<
+        Parameters<typeof createMessageHandlerDeps>[1]
+      >["employeeOnboardingStore"];
+      resolveAgentRoute?: NonNullable<
+        Parameters<typeof createMessageHandlerDeps>[1]
+      >["resolveAgentRoute"];
     } = {},
   ) {
     const readAllowFromStore = vi.fn(async () => ["attacker-aad"]);
@@ -81,17 +87,20 @@ describe("msteams monitor handler authz", () => {
       readAllowFromStore,
       upsertPairingRequest,
       recordInboundSession,
-      resolveAgentRoute: vi.fn(({ peer }: { peer: { kind: string; id: string } }) => ({
-        sessionKey: `msteams:${peer.kind}:${peer.id}`,
-        agentId: "default",
-        accountId: "default",
-      })),
+      resolveAgentRoute:
+        options.resolveAgentRoute ??
+        vi.fn(({ peer }: { peer: { kind: string; id: string } }) => ({
+          sessionKey: `msteams:${peer.kind}:${peer.id}`,
+          agentId: "default",
+          accountId: "default",
+        })),
       hasControlCommand: options.hasControlCommand,
       isControlCommandMessage: options.isControlCommandMessage,
       shouldComputeCommandAuthorized: options.shouldComputeCommandAuthorized,
       shouldHandleTextCommands: options.shouldHandleTextCommands,
       createInboundDebouncer: options.createInboundDebouncer,
       resolveInboundDebounceMs: options.resolveInboundDebounceMs,
+      employeeOnboardingStore: options.employeeOnboardingStore,
     });
   }
 
@@ -425,6 +434,105 @@ describe("msteams monitor handler authz", () => {
       timezone: "America/New_York",
     });
     expect(recordInboundSession).not.toHaveBeenCalled();
+    expect(runtimeApiMockState.dispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
+  });
+
+  it("captures unknown Teams DMs as pending employee onboarding when self-service is enabled", async () => {
+    runtimeApiMockState.dispatchReplyWithBufferedBlockDispatcher.mockClear();
+    const upsertRequest = vi.fn(async (request) => ({ request, created: true }));
+    const resolveAgentRoute = vi.fn(({ peer }: { peer: { kind: string; id: string } }) => ({
+      sessionKey: `msteams:${peer.kind}:${peer.id}`,
+      agentId: "main",
+      accountId: "default",
+      mainSessionKey: "agent:main:main",
+      lastRoutePolicy: "session" as const,
+      matchedBy: "default" as const,
+    }));
+    const { deps, upsertPairingRequest } = createDeps(
+      {
+        channels: {
+          msteams: {
+            dmPolicy: "pairing",
+            allowFrom: [],
+            employeeSelfServiceOnboarding: {
+              enabled: true,
+              acknowledgementText: "Onboarding request recorded.",
+              postProvisionAuthPromptWaitMs: 0,
+            },
+          },
+        },
+      } as OpenClawConfig,
+      {
+        employeeOnboardingStore: { upsertRequest },
+        resolveAgentRoute,
+      },
+    );
+    const handler = createMSTeamsMessageHandler(deps);
+    const activity = createAttackerPersonalActivity("self-service-onboarding-1");
+
+    await handler(activity);
+
+    expect(upsertRequest).toHaveBeenCalledTimes(1);
+    expect(upsertRequest.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        status: "pending",
+        senderName: "Attacker",
+        protectedRoute: {
+          teamsUserId: "attacker-id",
+          peerId: "attacker-aad",
+          conversationId: "a:personal-chat",
+        },
+      }),
+    );
+    expect(activity.sendActivity).toHaveBeenCalledWith("Onboarding request recorded.");
+    expect(upsertPairingRequest).not.toHaveBeenCalled();
+    expect(runtimeApiMockState.dispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
+  });
+
+  it("preserves the pairing path for unknown Teams DMs when self-service onboarding is disabled", async () => {
+    runtimeApiMockState.dispatchReplyWithBufferedBlockDispatcher.mockClear();
+    const upsertRequest = vi.fn(async (request) => ({ request, created: true }));
+    const { deps, upsertPairingRequest } = createDeps(
+      {
+        channels: {
+          msteams: {
+            dmPolicy: "pairing",
+            allowFrom: [],
+            employeeSelfServiceOnboarding: {
+              enabled: false,
+            },
+          },
+        },
+      } as OpenClawConfig,
+      {
+        employeeOnboardingStore: { upsertRequest },
+      },
+    );
+    const handler = createMSTeamsMessageHandler(deps);
+
+    await handler(
+      createMessageActivity({
+        id: "self-service-disabled-1",
+        text: "hello",
+        from: {
+          id: "unknown-user-id",
+          aadObjectId: "unknown-user-aad",
+          name: "Unknown User",
+        },
+        conversation: {
+          id: "a:unknown-personal-chat",
+          conversationType: "personal",
+        },
+      }),
+    );
+
+    expect(upsertRequest).not.toHaveBeenCalled();
+    expect(upsertPairingRequest).toHaveBeenCalledWith({
+      channel: "msteams",
+      accountId: "default",
+      id: "unknown-user-aad",
+      meta: { name: "Unknown User" },
+    });
     expect(runtimeApiMockState.dispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
   });
 

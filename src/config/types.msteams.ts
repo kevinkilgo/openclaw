@@ -44,6 +44,30 @@ export type MSTeamsSsoConfig = {
   connectionName?: string;
 };
 
+export type MSTeamsEmployeeSelfServiceOnboardingConfig = {
+  /** Enable capture of unassigned Teams DMs as pending employee onboarding requests. Default: false. */
+  enabled?: boolean;
+  /** Message sent after a pending onboarding request is recorded. */
+  acknowledgementText?: string;
+  /** Message sent when a pending onboarding request cannot be recorded. */
+  failureAcknowledgementText?: string;
+  /** Optional first-turn wait for provisioned employee route before sending Codex auth prompt. */
+  postProvisionAuthPromptWaitMs?: number;
+};
+
+export type MSTeamsEmployeeContainerDispatchConfig = {
+  /** Dispatch bound employee Teams turns to the employee container gateway. Default: false. */
+  enabled?: boolean;
+  /** Gateway URL template; use `{agentId}` for the route agent id. */
+  gatewayUrlTemplate?: string;
+  /** Employee config path template; use `{agentId}` for the route agent id. */
+  tokenConfigPathTemplate?: string;
+  /** Agent id inside the employee container. Default: main. */
+  agentId?: string;
+  /** Milliseconds to wait for employee container replies. */
+  waitTimeoutMs?: number;
+};
+
 /** Reply style for MS Teams messages. */
 export type MSTeamsReplyStyle = "thread" | "top-level";
 
@@ -143,6 +167,10 @@ export type MSTeamsConfig = Omit<
     feedbackReflection?: boolean;
     /** Minimum interval (ms) between reflections per session. Default: 300000 (5 min). */
     feedbackReflectionCooldownMs?: number;
+    /** Self-service capture of unassigned Teams DMs as employee onboarding requests. */
+    employeeSelfServiceOnboarding?: MSTeamsEmployeeSelfServiceOnboardingConfig;
+    /** Optional dispatch of bound employee Teams turns through employee container gateways. */
+    employeeContainerDispatch?: MSTeamsEmployeeContainerDispatchConfig;
     /** Delegated auth settings for user-scoped Graph API actions (e.g., reactions). */
     delegatedAuth?: {
       /** Enable delegated auth (user sign-in for Graph actions that need user scope). */

@@ -209,7 +209,7 @@ export function renderCardModal(props: WorkboardProps) {
           if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
             syncDraftTextInput(
               state,
-              event.currentTarget as HTMLFormElement,
+              event.currentTarget as HTMLFormElement, // SAFETY: This input handler is attached to the surrounding form element.
               input,
               draftActionsBusy,
             );

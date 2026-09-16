@@ -1,0 +1,24 @@
+{
+  "status_run_id": "20260914T210551Z-pr2-router-preflight-foreign-db",
+  "overall_result": "patched_pending_rebuild",
+  "claims": [
+    {
+      "id": "root-cause",
+      "status": "supported",
+      "claim": "Router startup preflight was inspecting registered employee/foreign agent DBs and hard-failing on their old schema.",
+      "evidence_ids": ["diff-preflight-scope", "regression-foreign-agent"]
+    },
+    {
+      "id": "router-safety-preserved",
+      "status": "supported",
+      "claim": "The router/default agent DB startup readiness check is still hard-fail.",
+      "evidence_ids": ["regression-router-agent"]
+    },
+    {
+      "id": "no-production-mutation",
+      "status": "supported",
+      "claim": "No production deploy, rebuild, live Teams smoke, or pilot-user expansion was performed during this source patch step.",
+      "evidence_ids": ["git-status-scope"]
+    }
+  ]
+}

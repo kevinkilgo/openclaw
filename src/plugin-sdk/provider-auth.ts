@@ -40,7 +40,11 @@ export {
   ensureAuthProfileStore,
   ensureAuthProfileStoreForLocalUpdate,
 } from "../agents/auth-profiles/store-runtime.js";
-export { listProfilesForProvider, upsertAuthProfile } from "../agents/auth-profiles/profiles.js";
+export {
+  listProfilesForProvider,
+  setAuthProfileOrder,
+  upsertAuthProfile,
+} from "../agents/auth-profiles/profiles.js";
 export {
   removeProviderAuthProfilesWithLockCompat as removeProviderAuthProfilesWithLock,
   updateAuthProfileStoreWithLockCompat as updateAuthProfileStoreWithLock,

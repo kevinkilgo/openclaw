@@ -1,0 +1,32 @@
+{
+  "generatedAt": "2026-09-01T16:43:49.532Z",
+  "requestId": "msteams-employee-onboarding-5d160d6fa7ae92a11c8a4f78",
+  "employee": {
+    "slug": "kkilgo",
+    "displayName": "Kevin Kilgo",
+    "email": "kkilgo@ftsc.com"
+  },
+  "request": {
+    "status": "pending",
+    "peerHash": "5d160d6fa7ae92a11c8a4f78",
+    "conversationHash": "f1c10a94e9c773029414015a",
+    "protectedRoute": "[protected]"
+  },
+  "proposed": {
+    "agentId": "kkilgo",
+    "stackName": "employee-agent-kkilgo",
+    "serviceName": "employee-agent-kkilgo",
+    "image": "local/openclaw-gateway:2026.8.1-kkilgo-runtime-compat-health-restore-20260901",
+    "secretRef": "employee_agent_kkilgo_token_v1",
+    "paths": {
+      "root": "/srv/openclaw/data/employee-agents/kkilgo",
+      "stackFile": "/srv/openclaw/stacks/employee-agent-kkilgo/stack.yml"
+    }
+  },
+  "configBackup": "/srv/openclaw/data/gateway-lanes-prod/configs/gateway-router/openclaw.json.pre-employee-agent-kkilgo-20260901T164349Z.bak",
+  "rollback": [
+    "restore /srv/openclaw/data/gateway-lanes-prod/configs/gateway-router/openclaw.json.pre-employee-agent-kkilgo-20260901T164349Z.bak to /srv/openclaw/data/gateway-lanes-prod/configs/gateway-router/openclaw.json and restart gateway-router",
+    "docker stack rm employee-agent-kkilgo",
+    "retain /srv/openclaw/data/employee-agents/kkilgo and Docker secret employee_agent_kkilgo_token_v1 until explicit cleanup approval"
+  ]
+}

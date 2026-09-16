@@ -8,6 +8,7 @@ import { requireNodeSqlite } from "../infra/node-sqlite.js";
 import { collectSqliteSchemaIssues } from "../infra/sqlite-schema-contract.js";
 import { runSqliteImmediateTransactionSync } from "../infra/sqlite-transaction.js";
 import { createUpdateRun } from "../infra/update-run-ledger.js";
+import { AGENT_MEDIA_SCHEMA_VERSION } from "./openclaw-agent-db-contract.js";
 import { OpenClawAgentDatabaseMediaMigrationRequiredError } from "./openclaw-agent-db-migration-required.js";
 import {
   closeOpenClawAgentDatabasesForTest,
@@ -148,6 +149,29 @@ describe("OpenClaw database schema preflight", () => {
       }
     },
   );
+
+  it("admits startup for a media-safe configured agent database that needs session identity migration", async () => {
+    const stateDir = tempDirs.make("openclaw-agent-startup-session-identity-admission-");
+    const env = { OPENCLAW_STATE_DIR: stateDir };
+    const agentPath = path.join(stateDir, "agents", "main", "agent", "openclaw-agent.sqlite");
+    openOpenClawAgentDatabase({ agentId: "main", path: agentPath, env });
+    closeOpenClawAgentDatabasesForTest();
+    closeOpenClawStateDatabaseForTest();
+    const { DatabaseSync } = requireNodeSqlite();
+    const writer = new DatabaseSync(agentPath);
+    try {
+      writer.exec(
+        "PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0; PRAGMA user_version = 17; UPDATE schema_meta SET schema_version = 17;",
+      );
+      const before = snapshotPreflightSourceManifest(stateDir, agentPath);
+      await expect(
+        assertOpenClawDatabasesReady({ env, operation: "gateway-startup", config: {} }),
+      ).resolves.toBeUndefined();
+      expect(snapshotPreflightSourceManifest(stateDir, agentPath)).toEqual(before);
+    } finally {
+      writer.close();
+    }
+  });
 
   it("rejects a canonical configured agent path owned by another agent before writes", async () => {
     const root = tempDirs.make("openclaw-configured-agent-owner-");
@@ -874,6 +898,59 @@ describe("OpenClaw database schema preflight", () => {
         reason: expect.stringContaining("belongs to agent main; requested agent ops"),
       },
     ]);
+  });
+
+  it("does not block Gateway startup on a registered employee database outside the router store", async () => {
+    const stateDir = tempDirs.make("openclaw-startup-foreign-agent-");
+    const env = { OPENCLAW_STATE_DIR: stateDir };
+    openOpenClawAgentDatabase({ agentId: "main", env });
+    const employeePath = openOpenClawAgentDatabase({ agentId: "babbey", env }).path;
+    closeOpenClawAgentDatabasesForTest();
+    closeOpenClawStateDatabaseForTest();
+
+    const { DatabaseSync } = requireNodeSqlite();
+    const employee = new DatabaseSync(employeePath);
+    try {
+      employee.exec(
+        `PRAGMA user_version = ${AGENT_MEDIA_SCHEMA_VERSION - 1}; UPDATE schema_meta SET schema_version = ${AGENT_MEDIA_SCHEMA_VERSION - 1} WHERE meta_key = 'primary';`,
+      );
+    } finally {
+      employee.close();
+    }
+
+    await expect(
+      assertOpenClawDatabasesReady({
+        env,
+        operation: "gateway-startup",
+        config: { agents: { ownership: "explicit", entries: { main: {}, babbey: {} } } },
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("still blocks Gateway startup when the router-owned database is below the media-safe migration floor", async () => {
+    const stateDir = tempDirs.make("openclaw-startup-router-agent-");
+    const env = { OPENCLAW_STATE_DIR: stateDir };
+    const routerPath = openOpenClawAgentDatabase({ agentId: "main", env }).path;
+    closeOpenClawAgentDatabasesForTest();
+    closeOpenClawStateDatabaseForTest();
+
+    const { DatabaseSync } = requireNodeSqlite();
+    const router = new DatabaseSync(routerPath);
+    try {
+      router.exec(
+        `PRAGMA user_version = ${AGENT_MEDIA_SCHEMA_VERSION - 1}; UPDATE schema_meta SET schema_version = ${AGENT_MEDIA_SCHEMA_VERSION - 1} WHERE meta_key = 'primary';`,
+      );
+    } finally {
+      router.close();
+    }
+
+    await expect(
+      assertOpenClawDatabasesReady({
+        env,
+        operation: "gateway-startup",
+        config: { agents: { ownership: "explicit", entries: { main: {} } } },
+      }),
+    ).rejects.toThrow(/migrate persisted media/iu);
   });
 
   it("reports a current but noncanonical registered agent schema as indeterminate", async () => {

@@ -994,6 +994,30 @@ describe("runDoctorConfigPreflight state migration", () => {
     expect(startupMigrationLeaseRelease).toHaveBeenCalledOnce();
   });
 
+  it("does not block gateway readiness for skipped foreign agent database notices", async () => {
+    readMigrationCheckpointStatus.mockReturnValue("stale");
+    autoMigrateLegacyStateDir.mockResolvedValueOnce({
+      migrated: false,
+      skipped: false,
+      changes: [],
+      warnings: [
+        "Skipped foreign agent database /srv/openclaw/data/employee-agents/hdadabhoy/state/.openclaw/agents/main/agent/openclaw-agent.sqlite; it is outside the active state directory and is not a configured session store.",
+      ],
+    });
+
+    await expect(
+      runDoctorConfigPreflight({
+        migrateLegacyConfig: false,
+        invalidConfigNote: false,
+        requireStartupMigrationCheckpoint: true,
+      }),
+    ).resolves.toMatchObject({});
+
+    expect(recordSuccessfulStateMigrations).toHaveBeenCalledOnce();
+    expect(recordSuccessfulStartupMigrations).toHaveBeenCalledOnce();
+    expect(startupMigrationLeaseRelease).toHaveBeenCalledOnce();
+  });
+
   it("blocks gateway readiness when plugin repair warnings remain", async () => {
     readMigrationCheckpointStatus.mockReturnValue("stale");
     runPostCorePluginConvergence.mockResolvedValueOnce(

@@ -1,0 +1,87 @@
+version: "3.13"
+services:
+  employee-agent-kkilgo:
+    command:
+      - sh
+      - -lc
+      - export OPENCLAW_GATEWAY_TOKEN=$(cat /run/secrets/employee_agent_token); exec openclaw gateway --port 18789
+    deploy:
+      restart_policy:
+        condition: any
+        delay: 10s
+        max_attempts: 3
+        window: 2m0s
+      placement:
+        constraints:
+          - node.labels.openclaw.role == active
+    environment:
+      OPENCLAW_AGENT_OWNER: kkilgo
+      OPENCLAW_AGENT_SCOPE: user
+      OPENCLAW_APPROVAL_CLASS: draft-prepare
+      OPENCLAW_CONFIG_PATH: /home/openclaw/config/openclaw.json
+      OPENCLAW_DISABLED_CHANNELS: telegram
+      OPENCLAW_GATEWAY_PORT: "18789"
+      OPENCLAW_GATEWAY_TOKEN_FILE: /run/secrets/employee_agent_token
+      OPENCLAW_MEMORY_SCOPE: employee-agent-kkilgo
+      OPENCLAW_PRIMARY_CHANNEL: msteams
+      OPENCLAW_STATE_DIR: /home/openclaw/.openclaw
+      OPENCLAW_TOOL_POLICY: employee-standard-v1
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - openclaw gateway status >/dev/null 2>&1 || exit 1
+      timeout: 10s
+      interval: 30s
+      retries: 3
+      start_period: 45s
+    image: local/openclaw-gateway:2026.8.1-kkilgo-runtime-compat-health-restore-20260901
+    networks:
+      edge: null
+      gateway: null
+    secrets:
+      - source: employee_agent_token
+        target: employee_agent_token
+        uid: "1000"
+        gid: "1000"
+        mode: 256
+    volumes:
+      - type: bind
+        source: /srv/openclaw/data/employee-agents/kkilgo/config
+        target: /home/openclaw/config
+        read_only: true
+      - type: bind
+        source: /srv/openclaw/data/employee-agents/kkilgo/state/.openclaw
+        target: /home/openclaw/.openclaw
+      - type: bind
+        source: /srv/openclaw/data/employee-agents/kkilgo/workspace
+        target: /home/openclaw/workspace
+      - type: bind
+        source: /srv/openclaw/data/employee-agents/kkilgo/shared/artifacts
+        target: /shared/artifacts
+      - type: bind
+        source: /srv/openclaw/data/employee-agents/kkilgo/shared/task-inputs
+        target: /shared/task-inputs
+        read_only: true
+      - type: bind
+        source: /srv/openclaw/data/employee-agents/kkilgo/shared/task-results
+        target: /shared/task-results
+networks:
+  edge:
+    name: openclaw-gateway-lanes-prod-swarm_edge
+    external: true
+  gateway:
+    name: openclaw-gateway-lanes-prod-swarm_gateway
+    external: true
+secrets:
+  employee_agent_token:
+    name: employee_agent_kkilgo_token_v1
+    external: true
+x-employee-agent-placement:
+  placement:
+    constraints:
+      - node.labels.openclaw.role == active
+  restart_policy:
+    condition: any
+    delay: 10s
+    max_attempts: 3
+    window: 120s
