@@ -143,16 +143,102 @@ async function readEmployeeContainerConfig(
   ) as EmployeeContainerOpenClawConfig; // SAFETY: Employee container config is parsed from OpenClaw-owned JSON and callers validate required fields before use.
 }
 
-async function readEmployeeGatewayToken(
-  dispatchCfg: MSTeamsEmployeeContainerDispatchConfig,
+function readEmployeeGatewayTokenFromConfig(
+  parsed: EmployeeContainerOpenClawConfig,
   agentId: string,
-): Promise<string> {
-  const parsed = await readEmployeeContainerConfig(dispatchCfg, agentId);
+): string {
   const token = parsed.gateway?.auth?.token;
   if (typeof token !== "string" || !token.trim()) {
     throw new Error(`employee container gateway token missing for ${agentId}`);
   }
   return token;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function titleCaseIntegrationId(value: string): string {
+  return value
+    .split(/[-_\s]+/u)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function readConfiguredEmployeeMcpServerIds(config: EmployeeContainerOpenClawConfig): string[] {
+  const configRecord = config as Record<string, unknown>;
+  const mcp = configRecord.mcp;
+  const servers = isPlainRecord(mcp) ? mcp.servers : undefined;
+  if (!isPlainRecord(servers)) {
+    return [];
+  }
+  return Object.keys(servers)
+    .map((serverId) => serverId.trim())
+    .filter(Boolean)
+    .sort((left, right) => left.localeCompare(right));
+}
+
+function isNaturalLanguageModuleDiscoveryRequest(message: string): boolean {
+  return (
+    /\b(access|available|availability|module|integration|connector|skill|onboard|onboarding|enable|enabled|set up|setup|configured)\b/iu.test(
+      message,
+    ) ||
+    /\b(do i have|can i use|what can i use|what is available|what's available)\b/iu.test(message)
+  );
+}
+
+function resolveRequestedEmployeeIntegrationName(params: {
+  message: string;
+  configuredMcpServerIds: string[];
+}): string | undefined {
+  for (const serverId of params.configuredMcpServerIds) {
+    if (new RegExp(`\\b${escapeRegExp(serverId)}\\b`, "iu").test(params.message)) {
+      return titleCaseIntegrationId(serverId);
+    }
+  }
+  const explicit =
+    params.message.match(
+      /\b(?:access to|use|available|enable|onboard(?:ed)? to)\s+([A-Za-z][\w-]{1,40})/iu,
+    )?.[1] ??
+    params.message.match(
+      /\b([A-Za-z][\w-]{1,40})\s+(?:module|integration|connector|skill)\b/iu,
+    )?.[1];
+  return explicit ? titleCaseIntegrationId(explicit) : undefined;
+}
+
+function addEmployeeModuleDiscoveryGuidance(params: {
+  message: string;
+  employeeConfig: EmployeeContainerOpenClawConfig;
+}): string {
+  if (!isNaturalLanguageModuleDiscoveryRequest(params.message)) {
+    return params.message;
+  }
+  const configuredMcpServerIds = readConfiguredEmployeeMcpServerIds(params.employeeConfig);
+  const requested = resolveRequestedEmployeeIntegrationName({
+    message: params.message,
+    configuredMcpServerIds,
+  });
+  const configuredText =
+    configuredMcpServerIds.length > 0 ? configuredMcpServerIds.join(", ") : "none visible";
+  const requestedLine = requested
+    ? `Likely requested integration/module: ${requested}`
+    : "Likely requested integration/module: infer from the user's wording.";
+  const guidance = [
+    "Employee integration/module discovery guidance:",
+    "- When the user asks whether they have access to a module, integration, connector, skill, or capability, infer the likely requested target from natural language. Do not require exact enable/onboard phrasing.",
+    "- Treat configured MCP server ids as available integrations/modules, then distinguish configured, ready, repairable, and blocked states in plain language.",
+    '- If the requested integration is configured but readiness is unknown, unhealthy, or a live probe fails, do not stop at low-level MCP diagnostics. Say: "Yes, <Name> is an available integration/module we have built/configured. I do not yet have a clean readiness proof from here. Would you like me to start onboarding or repair validation?"',
+    "- If the requested integration is configured and healthy, offer to help with the actual request using it.",
+    "- If the requested integration is not configured, say it is not currently available here and offer to request/queue enablement.",
+    `Configured employee MCP integrations/modules: ${configuredText}`,
+    requestedLine,
+  ].join("\n");
+  return `${params.message}\n\n${guidance}`;
 }
 
 function resolveEmployeeHostRoot(
@@ -513,7 +599,12 @@ async function dispatchViaEmployeeContainer(params: {
     params.routeSessionKey,
   );
   const url = resolveEmployeeGatewayUrl(dispatchCfg, params.routeAgentId);
-  const token = await readEmployeeGatewayToken(dispatchCfg, params.routeAgentId);
+  const employeeConfig = await readEmployeeContainerConfig(dispatchCfg, params.routeAgentId);
+  const token = readEmployeeGatewayTokenFromConfig(employeeConfig, params.routeAgentId);
+  const message = addEmployeeModuleDiscoveryGuidance({
+    message: params.message,
+    employeeConfig,
+  });
   const waitTimeoutMs = Math.max(
     1,
     Math.floor(dispatchCfg.waitTimeoutMs ?? EMPLOYEE_CONTAINER_DEFAULT_WAIT_TIMEOUT_MS),
@@ -542,7 +633,7 @@ async function dispatchViaEmployeeContainer(params: {
         {
           agentId: employeeAgentId,
           sessionKey,
-          message: params.message,
+          message,
           idempotencyKey,
           deliver: false,
           timeout: Math.ceil(waitTimeoutMs / 1000),

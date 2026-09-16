@@ -323,6 +323,66 @@ describe("msteams employee container dispatch", () => {
     );
   });
 
+  it("adds natural-language module discovery guidance for configured employee integrations", async () => {
+    gatewayRuntimeMockState.callGatewayFromCli.mockReset();
+    gatewayRuntimeMockState.callGatewayFromCli
+      .mockResolvedValueOnce({ runId: "run-krisp-discovery" })
+      .mockResolvedValueOnce({
+        status: "ok",
+        terminalReply: {
+          text: "Yes, Krisp is an available integration. Would you like to be onboarded?",
+        },
+      });
+    fsMockState.readFile.mockResolvedValue(
+      JSON.stringify({
+        gateway: { auth: { token: "test-token" } },
+        agents: { entries: { main: { name: "Kevin User" } } },
+        mcp: {
+          servers: {
+            krisp: { url: "https://mcp.krisp.ai/mcp" },
+            ms365: { command: "ms365" },
+          },
+        },
+      }),
+    );
+    const cfg = createConfig();
+    const runtime = { error: vi.fn() } as unknown as RuntimeEnv;
+    const handler = createMSTeamsMessageHandler(createMSTeamsMessageHandlerDeps({ cfg, runtime }));
+    const context = createContext();
+    context.activity.text = "Do i have access to Krisp from here yet? Is that an available module";
+
+    await handler(context);
+
+    expect(gatewayRuntimeMockState.callGatewayFromCli).toHaveBeenNthCalledWith(
+      1,
+      "agent",
+      expect.anything(),
+      expect.objectContaining({
+        message: expect.stringContaining("Employee integration/module discovery guidance"),
+      }),
+      expect.anything(),
+    );
+    const dispatched = gatewayRuntimeMockState.callGatewayFromCli.mock.calls[0]?.[2] as
+      | { message?: string }
+      | undefined;
+    expect(dispatched?.message).toContain(
+      "Configured employee MCP integrations/modules: krisp, ms365",
+    );
+    expect(dispatched?.message).toContain("Likely requested integration/module: Krisp");
+    expect(dispatched?.message).toContain(
+      "Yes, <Name> is an available integration/module we have built/configured.",
+    );
+    expect(dispatched?.message).toContain(
+      "Do i have access to Krisp from here yet? Is that an available module",
+    );
+    expect(replyDispatcherMockState.deliver).toHaveBeenCalledWith(
+      {
+        text: "Yes, Krisp is an available integration. Would you like to be onboarded?",
+      },
+      expect.objectContaining({ kind: "final", stage: "final" }),
+    );
+  });
+
   it("starts Codex device-code login when the employee container lacks OpenAI auth", async () => {
     gatewayRuntimeMockState.callGatewayFromCli.mockReset();
     gatewayRuntimeMockState.callGatewayFromCli
