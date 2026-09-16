@@ -1161,14 +1161,10 @@ describe("createMSTeamsReplyDispatcher", () => {
     expect(sendMSTeamsMessagesMock).toHaveBeenCalledTimes(1);
   });
 
-  it("splits long personal block replies into in-Teams continuation messages", async () => {
+  it("splits long personal block replies into native Teams continuation messages", async () => {
     registerHooks("message_sending");
-    renderReplyPayloadsToMessagesMock.mockImplementation(
-      (payloads) =>
-        payloads.map((payload) => ({ text: payload.text, mediaUrl: payload.mediaUrl })) as never,
-    );
-    sendMSTeamsMessagesMock.mockResolvedValue(["continuation-id"] as never);
     const dispatcher = createDispatcher("personal");
+    const stream = getStreamMock();
     const longReply = [
       "Executive summary",
       "A".repeat(1_100),
@@ -1183,17 +1179,17 @@ describe("createMSTeamsReplyDispatcher", () => {
       visibleReplySent: true,
       content: longReply,
     });
-    const renderCall = renderReplyPayloadsToMessagesMock.mock.calls[0];
-    expect(renderCall).toBeDefined();
-    const continuationPayloads = renderCall![0] as ReplyPayload[];
-    expect(continuationPayloads).toHaveLength(2);
-    expect(continuationPayloads[0]?.text).toContain("Response continued 1/");
-    expect(continuationPayloads.at(-1)?.text).toContain("END OF FULL RESPONSE");
-    expect(continuationPayloads.some((payload) => payload.mediaUrl)).toBe(false);
-    expect(continuationPayloads.every((payload) => (payload.text?.length ?? 0) <= 2_400)).toBe(
-      true,
+    expect(renderReplyPayloadsToMessagesMock).not.toHaveBeenCalled();
+    expect(sendMSTeamsMessagesMock).not.toHaveBeenCalled();
+    expect(stream.close).toHaveBeenCalledTimes(2);
+    const continuationTexts = stream.emit.mock.calls.map(([activity]) =>
+      typeof activity === "string" ? activity : activity.text,
     );
-    const continuationText = continuationPayloads.map((payload) => payload.text ?? "").join("\n");
+    expect(continuationTexts).toHaveLength(2);
+    expect(continuationTexts[0]).toContain("Response continued 1/");
+    expect(continuationTexts.at(-1)).toContain("END OF FULL RESPONSE");
+    expect(continuationTexts.every((text) => (text?.length ?? 0) <= 2_400)).toBe(true);
+    const continuationText = continuationTexts.join("\n");
     expect(continuationText).not.toMatch(/…|\.\.\.$|truncated/i);
     expect(continuationText).toContain("Executive summary");
     expect(continuationText).toContain("A".repeat(100));
@@ -1201,13 +1197,9 @@ describe("createMSTeamsReplyDispatcher", () => {
     expect(continuationText).toContain("C".repeat(100));
   });
 
-  it("sends long post-native progress remainder as in-Teams continuation messages", async () => {
-    renderReplyPayloadsToMessagesMock.mockImplementation(
-      (payloads) =>
-        payloads.map((payload) => ({ text: payload.text, mediaUrl: payload.mediaUrl })) as never,
-    );
-    sendMSTeamsMessagesMock.mockResolvedValue(["full-response-file-card"] as never);
+  it("sends long post-native progress remainder as native Teams continuation messages", async () => {
     const dispatcher = createDispatcher("personal", { streaming: { mode: "progress" } });
+    const stream = getStreamMock();
     const previewPrefix = "A".repeat(12_100);
     const remainder = "B".repeat(3_200);
     const fullReply = `${previewPrefix}\n\n${remainder}`;
@@ -1224,34 +1216,19 @@ describe("createMSTeamsReplyDispatcher", () => {
     });
     expect(outcome?.messageIds?.[0]).toBe("stream-final");
     expect(outcome?.messageIds?.length).toBeGreaterThan(2);
-    const renderCall = renderReplyPayloadsToMessagesMock.mock.calls[0];
-    expect(renderCall).toBeDefined();
-    const continuationPayloads = renderCall![0] as ReplyPayload[];
-    expect(continuationPayloads.length).toBeLessThanOrEqual(5);
-    expect(continuationPayloads[0]?.text).toContain("Response continued 1/");
-    expect(continuationPayloads.at(-1)?.text).toContain("END OF FULL RESPONSE");
-    expect(continuationPayloads.some((payload) => payload.mediaUrl)).toBe(false);
-    expect(continuationPayloads.every((payload) => (payload.text?.length ?? 0) <= 2_400)).toBe(
-      true,
+    expect(renderReplyPayloadsToMessagesMock).not.toHaveBeenCalled();
+    expect(sendMSTeamsMessagesMock).not.toHaveBeenCalled();
+    const emittedTexts = stream.emit.mock.calls.map(([activity]) =>
+      typeof activity === "string" ? activity : activity.text,
     );
-    expect(continuationPayloads.map((payload) => payload.text ?? "").join("\n")).toContain(
-      remainder.slice(0, 100),
-    );
-    expect(continuationPayloads.map((payload) => payload.text ?? "").join("\n")).not.toMatch(
-      /…|\.\.\.$|truncated/i,
-    );
-    const sentMessages = sendMSTeamsMessagesMock.mock.calls.flatMap(([send]) => send.messages);
-    expect(sentMessages).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          text: expect.stringContaining("Response continued 1/"),
-        }),
-        expect.objectContaining({
-          text: expect.stringContaining("END OF FULL RESPONSE"),
-        }),
-      ]),
-    );
-    expect(sentMessages.some((message) => message.mediaUrl)).toBe(false);
+    const continuationTexts = emittedTexts.filter((text) => text?.includes("Response continued"));
+    expect(continuationTexts.length).toBeGreaterThan(1);
+    expect(continuationTexts.length).toBeLessThanOrEqual(5);
+    expect(continuationTexts[0]).toContain("Response continued 1/");
+    expect(continuationTexts.at(-1)).toContain("END OF FULL RESPONSE");
+    expect(continuationTexts.every((text) => (text?.length ?? 0) <= 2_400)).toBe(true);
+    expect(continuationTexts.join("\n")).toContain(remainder.slice(0, 100));
+    expect(continuationTexts.join("\n")).not.toMatch(/…|\.\.\.$|truncated/i);
   });
 
   it("settles delivery when sent-message ID observation throws", async () => {

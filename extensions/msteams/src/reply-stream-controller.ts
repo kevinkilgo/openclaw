@@ -85,11 +85,11 @@ export function createTeamsReplyStreamController(params: {
 }) {
   const isPersonal = normalizeOptionalLowercaseString(params.conversationType) === "personal";
   const streamMode = resolveChannelPreviewStreamMode(params.msteamsConfig, "partial");
-  const shouldUseNativeStream =
-    params.allowProviderPreview &&
-    isPersonal &&
-    (streamMode === "partial" || streamMode === "progress");
+  const supportsNativeFinalMessages =
+    isPersonal && (streamMode === "partial" || streamMode === "progress");
+  const shouldUseNativeStream = params.allowProviderPreview && supportsNativeFinalMessages;
   const stream = shouldUseNativeStream ? params.context.stream : undefined;
+  const finalMessageStream = supportsNativeFinalMessages ? params.context.stream : undefined;
 
   let tokensEmitted = false;
   let nativeDispatchStarted = false;
@@ -728,6 +728,40 @@ export function createTeamsReplyStreamController(params: {
 
     hasStream(): boolean {
       return Boolean(stream);
+    },
+
+    hasNativeFinalMessageStream(): boolean {
+      return Boolean(finalMessageStream);
+    },
+
+    async deliverFinalMessage(payload: ReplyPayload): Promise<MSTeamsNativeDeliveryFinalization> {
+      if (!finalMessageStream || !payload.text || wasCanceled()) {
+        return { visibleReplySent: false, fallbackPayload: payload };
+      }
+      try {
+        const activity = finalStreamActivity(payload.text);
+        finalMessageStream.emit(activity);
+        const result = await finalMessageStream.close();
+        if (!result) {
+          return { visibleReplySent: false, fallbackPayload: payload };
+        }
+        const messageId = extractMessageId(result) ?? undefined;
+        return {
+          visibleReplySent: true,
+          content: activity.text,
+          logicalContent: payload.text,
+          ...(messageId ? { messageId } : {}),
+        };
+      } catch (err) {
+        if (isStreamCancelledError(err)) {
+          canceledLocally = true;
+          return acknowledgedNativeDelivery();
+        }
+        params.log?.warn?.(
+          `msteams native final message failed, falling back to block delivery: ${coerceErrorMessage(err)}`,
+        );
+        return { visibleReplySent: false, fallbackPayload: payload };
+      }
     },
 
     isStreamActive(): boolean {
