@@ -368,8 +368,8 @@ export function createMSTeamsReplyDispatcher(params: {
     });
   };
 
-  const renderReplyPayload = (payload: ReplyPayload) => {
-    return renderReplyPayloadsToMessages(createTeamsContinuationPayloads(payload), {
+  const renderContinuationPayloads = (payloads: ReplyPayload[]) => {
+    return renderReplyPayloadsToMessages(payloads, {
       textChunkLimit: params.textLimit,
       chunkText: true,
       mediaMode: "split",
@@ -378,14 +378,12 @@ export function createMSTeamsReplyDispatcher(params: {
     });
   };
 
+  const renderReplyPayload = (payload: ReplyPayload) => {
+    return renderContinuationPayloads(createTeamsContinuationPayloads(payload));
+  };
+
   const renderPostNativePayload = async (payload: ReplyPayload) => {
-    return renderReplyPayloadsToMessages(createTeamsContinuationPayloads(payload), {
-      textChunkLimit: params.textLimit,
-      chunkText: true,
-      mediaMode: "split",
-      tableMode,
-      chunkMode,
-    });
+    return renderContinuationPayloads(createTeamsContinuationPayloads(payload));
   };
 
   const deliveryOutcome = (delivery: PendingDelivery): DeliveryOutcome => {
@@ -508,6 +506,32 @@ export function createMSTeamsReplyDispatcher(params: {
     }
   };
 
+  const sendNativeContinuationPayloads = async (
+    delivery: PendingDelivery,
+    payloads: ReplyPayload[],
+  ): Promise<string[]> => {
+    const sentIds: string[] = [];
+    for (const payload of payloads) {
+      const result = await streamController.deliverFinalMessage(payload);
+      if (result.visibleReplySent) {
+        const messageIds = result.messageId ? [result.messageId] : [];
+        sentIds.push(...messageIds);
+        delivery.blockResults.push({
+          messageIds,
+          ...(result.logicalContent !== undefined
+            ? { content: result.logicalContent }
+            : result.content !== undefined
+              ? { content: result.content }
+              : {}),
+        });
+      }
+      if (result.fallbackPayload) {
+        delivery.messages.push(...renderReplyPayload(result.fallbackPayload));
+      }
+    }
+    return sentIds;
+  };
+
   const dispatcherOptions: NonNullable<ChannelInboundTurnPlan["dispatcherOptions"]> = {
     ...replyPipeline,
     humanDelay: resolveHumanDelayConfig(params.cfg, params.agentId),
@@ -539,11 +563,19 @@ export function createMSTeamsReplyDispatcher(params: {
         // its final text or escape a Stop discovered by that closing request.
         await settleDelivery();
       }
-      const messages =
+      const continuationPayloads =
         preparedPayload && !streamController.wasCanceled()
-          ? renderReplyPayload(preparedPayload)
+          ? createTeamsContinuationPayloads(preparedPayload)
           : [];
-      if (!native && messages.length === 0) {
+      const nativeContinuation =
+        !native &&
+        continuationPayloads.length > 1 &&
+        streamController.hasNativeFinalMessageStream();
+      const messages =
+        continuationPayloads.length > 0 && !nativeContinuation
+          ? renderContinuationPayloads(continuationPayloads)
+          : [];
+      if (!native && !nativeContinuation && messages.length === 0) {
         return {
           visibleReplySent: false,
           suppression: { reason: "no_visible_result" },
@@ -556,6 +588,22 @@ export function createMSTeamsReplyDispatcher(params: {
       // delivered progressively instead of batching until markDispatchIdle.
       if (blockStreamingEnabled) {
         await flushPendingMessages();
+      }
+      if (nativeContinuation) {
+        const sentIds = await sendNativeContinuationPayloads(pending, continuationPayloads);
+        pending.blockSettled = pending.messages.length === 0;
+        if (pending.messages.length > 0) {
+          await flushPendingMessages();
+        }
+        if (sentIds.length > 0) {
+          try {
+            params.onSentMessageIds?.(sentIds);
+          } catch (error) {
+            params.log.warn?.("failed to record sent Teams message ids", {
+              error: formatUnknownError(error),
+            });
+          }
+        }
       }
       settlePendingDelivery(pending);
       return {
@@ -621,7 +669,24 @@ export function createMSTeamsReplyDispatcher(params: {
         ];
         if (afterNativePayloads.length > 0) {
           for (const payload of afterNativePayloads) {
-            nativeDelivery.messages.push(...(await renderPostNativePayload(payload)));
+            const continuationPayloads = createTeamsContinuationPayloads(payload);
+            if (continuationPayloads.length > 1 && streamController.hasNativeFinalMessageStream()) {
+              const sentIds = await sendNativeContinuationPayloads(
+                nativeDelivery,
+                continuationPayloads,
+              );
+              if (sentIds.length > 0) {
+                try {
+                  params.onSentMessageIds?.(sentIds);
+                } catch (error) {
+                  params.log.warn?.("failed to record sent Teams message ids", {
+                    error: formatUnknownError(error),
+                  });
+                }
+              }
+            } else {
+              nativeDelivery.messages.push(...(await renderPostNativePayload(payload)));
+            }
           }
           nativeDelivery.blockSettled = nativeDelivery.messages.length === 0;
         }
