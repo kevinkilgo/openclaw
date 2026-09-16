@@ -209,17 +209,12 @@ export function createTeamsReplyStreamController(params: {
     channelData: params.feedbackLoopEnabled ? { feedbackLoopEnabled: true } : {},
   });
 
-  const splitLongProgressFinalPayload = (
+  const splitLongFinalPayload = (
     payload: ReplyPayload,
   ):
     | { previewPayload: ReplyPayload; postNativePayload: ReplyPayload; logicalContent: string }
     | undefined => {
-    if (
-      streamMode !== "progress" ||
-      nativeDispatchStarted ||
-      typeof payload.text !== "string" ||
-      !payload.text
-    ) {
+    if (typeof payload.text !== "string" || !payload.text) {
       return undefined;
     }
     if (
@@ -430,7 +425,10 @@ export function createTeamsReplyStreamController(params: {
       if (payload.text) {
         progressDraft.markFinalReplyStarted();
       }
-      const longProgressFinal = splitLongProgressFinalPayload(payload);
+      const longProgressFinal =
+        streamMode === "progress" && !nativeDispatchStarted
+          ? splitLongFinalPayload(payload)
+          : undefined;
       if (longProgressFinal) {
         try {
           stream.emit(longProgressFinal.previewPayload.text!);
@@ -534,6 +532,12 @@ export function createTeamsReplyStreamController(params: {
       }
       if (tokensEmitted) {
         const hasMedia = Boolean(payload.mediaUrl || payload.mediaUrls?.length);
+        const longPartialFinal =
+          streamMode === "partial" ? splitLongFinalPayload(payload) : undefined;
+        if (longPartialFinal) {
+          longFinalLogicalContent = longPartialFinal.logicalContent;
+          longFinalPostNativePayloads = [longPartialFinal.postNativePayload];
+        }
         pendingFinalPayload = fallbackPayloadForSuppressedFinal(payload);
         streamFinalizationPending = true;
         tokensEmitted = false;
