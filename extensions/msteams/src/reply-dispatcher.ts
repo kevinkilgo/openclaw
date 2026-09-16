@@ -1,6 +1,3 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
-import path from "node:path";
 import { resolveHumanDelayConfig } from "openclaw/plugin-sdk/agent-runtime";
 import {
   createChannelPartialDeliveryError,
@@ -18,7 +15,6 @@ import { PlatformMessageNotDispatchedError } from "openclaw/plugin-sdk/error-run
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { getGlobalHookRunner } from "openclaw/plugin-sdk/plugin-runtime";
 import { normalizeOptionalLowercaseString } from "openclaw/plugin-sdk/string-coerce-runtime";
-import { resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk/temp-path";
 import {
   createChannelMessageReplyPipeline,
   logTypingFailure,
@@ -93,17 +89,12 @@ export function createMSTeamsReplyDispatcher(params: {
    */
   const TYPING_KEEPALIVE_MAX_DURATION_MS = 10 * 60_000;
 
-  // Teams mobile can visually clip follow-up chat bubbles even when we split
-  // them below the documented activity size. Once a native expandable preview
-  // has landed, put the remaining long final text into a file so the full
-  // answer has a provider-supported delivery path instead of another clipped
-  // bubble.
-  const FULL_TEXT_ARTIFACT_THRESHOLD = 2_500;
-
-  // FileConsentCard delivery in personal chats is not a guaranteed visible
-  // full-response path on every Teams client. Keep backup text parts small
-  // enough to avoid the mobile clipping seen with larger follow-up bubbles.
-  const FULL_TEXT_BACKUP_CHUNK_LIMIT = 900;
+  // Teams mobile can visually clip follow-up chat bubbles near the documented
+  // activity ceiling. Keep post-native continuation messages intentionally
+  // conservative so long replies stay inside Teams chat instead of requiring
+  // users to open a file/card.
+  const LONG_TEXT_CONTINUATION_THRESHOLD = 2_500;
+  const LONG_TEXT_CONTINUATION_CHUNK_LIMIT = 900;
 
   // Forward references: sendTypingIndicator is built before the stream
   // controller exists, but the keepalive tick needs to check stream state so
@@ -309,41 +300,48 @@ export function createMSTeamsReplyDispatcher(params: {
     });
   };
 
-  const createFullTextArtifactPayloads = async (payload: ReplyPayload): Promise<ReplyPayload[]> => {
+  const splitTextForTeamsContinuation = (text: string, limit: number): string[] => {
+    const chunks: string[] = [];
+    let remaining = text.trim();
+    while (remaining.length > limit) {
+      const window = remaining.slice(0, limit + 1);
+      const breakpoints = [
+        window.lastIndexOf("\n\n"),
+        window.lastIndexOf("\n"),
+        window.lastIndexOf(". "),
+        window.lastIndexOf("? "),
+        window.lastIndexOf("! "),
+        window.lastIndexOf("; "),
+        window.lastIndexOf(", "),
+        window.lastIndexOf(" "),
+      ];
+      const splitAt = Math.max(...breakpoints.filter((index) => index >= Math.floor(limit * 0.45)));
+      const boundary = splitAt > 0 ? splitAt + 1 : limit;
+      const chunk = remaining.slice(0, boundary).trim();
+      if (chunk) {
+        chunks.push(chunk);
+      }
+      remaining = remaining.slice(boundary).trim();
+    }
+    if (remaining) {
+      chunks.push(remaining);
+    }
+    return chunks;
+  };
+
+  const createTeamsContinuationPayloads = (payload: ReplyPayload): ReplyPayload[] => {
     if (
       conversationType !== "personal" ||
       typeof payload.text !== "string" ||
-      payload.text.length <= FULL_TEXT_ARTIFACT_THRESHOLD ||
+      payload.text.length <= LONG_TEXT_CONTINUATION_THRESHOLD ||
       payload.mediaUrl ||
       payload.mediaUrls?.length
     ) {
       return [payload];
     }
 
-    const directory = path.join(resolvePreferredOpenClawTmpDir(), "msteams-full-responses");
-    await mkdir(directory, { recursive: true });
-    const filename = `openclaw-full-response-${Date.now()}-${randomUUID()}.txt`;
-    const filePath = path.join(directory, filename);
-    await writeFile(filePath, payload.text, "utf8");
-
-    const artifactPayload: ReplyPayload = {
-      ...payload,
-      text: `Full response attached as ${filename}. Teams is clipping long chat bubbles on some clients, so OpenClaw is sending the complete answer as a text file.`,
-      mediaUrl: filePath,
-    };
-
-    if (params.sharePointSiteId) {
-      return [artifactPayload];
-    }
-
-    const chunks: string[] = [];
-    for (let offset = 0; offset < payload.text.length; offset += FULL_TEXT_BACKUP_CHUNK_LIMIT) {
-      const chunk = payload.text.slice(offset, offset + FULL_TEXT_BACKUP_CHUNK_LIMIT).trim();
-      if (chunk) {
-        chunks.push(chunk);
-      }
-    }
-    const backupPayloads = chunks.map((chunk, index): ReplyPayload => {
+    const chunks = splitTextForTeamsContinuation(payload.text, LONG_TEXT_CONTINUATION_CHUNK_LIMIT);
+    return chunks.map((chunk, index): ReplyPayload => {
       const ordinal = index + 1;
       const final = ordinal === chunks.length;
       return {
@@ -351,18 +349,16 @@ export function createMSTeamsReplyDispatcher(params: {
         mediaUrl: undefined,
         mediaUrls: undefined,
         text: [
-          `Full response backup part ${ordinal}/${chunks.length}`,
+          `Response continued ${ordinal}/${chunks.length}`,
           "",
           chunk,
           "",
-          final ? "END OF FULL RESPONSE BACKUP" : undefined,
+          final ? "END OF FULL RESPONSE" : undefined,
         ]
           .filter(Boolean)
           .join("\n"),
       };
     });
-
-    return [artifactPayload, ...backupPayloads];
   };
 
   const renderReplyPayload = (payload: ReplyPayload) => {
@@ -376,7 +372,7 @@ export function createMSTeamsReplyDispatcher(params: {
   };
 
   const renderPostNativePayload = async (payload: ReplyPayload) => {
-    return renderReplyPayloadsToMessages(await createFullTextArtifactPayloads(payload), {
+    return renderReplyPayloadsToMessages(createTeamsContinuationPayloads(payload), {
       textChunkLimit: params.textLimit,
       chunkText: true,
       mediaMode: "split",
