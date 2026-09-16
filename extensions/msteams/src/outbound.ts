@@ -197,9 +197,22 @@ export const msteamsOutbound: ChannelOutboundAdapter = {
   },
   ...createAttachedChannelResultAdapter({
     channel: "msteams",
-    sendText: async ({ cfg, to, text, deps, threadId }) => {
+    sendText: async ({ cfg, to, text, deps, threadId, onDeliveryResult }) => {
       const send = resolveMSTeamsTextSend({ cfg, deps });
-      return toMSTeamsOutboundResult(await send(resolveMSTeamsThreadTarget(to, threadId), text));
+      const deliveryTarget = resolveMSTeamsThreadTarget(to, threadId);
+      const chunks = resolveTextChunksWithFallback(
+        text,
+        chunkTextForOutbound(
+          text,
+          resolveMSTeamsEffectiveTextChunkLimit(cfg.channels?.msteams?.textChunkLimit),
+        ),
+      );
+      let result: Awaited<ReturnType<MSTeamsTextSendFn>>;
+      for (const chunk of chunks) {
+        result = await send(deliveryTarget, chunk);
+        await onDeliveryResult?.(attachChannelToResult("msteams", toMSTeamsOutboundResult(result)));
+      }
+      return toMSTeamsOutboundResult(result!);
     },
     sendMedia: async ({
       cfg,

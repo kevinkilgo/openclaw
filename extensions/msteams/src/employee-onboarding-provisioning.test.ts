@@ -287,7 +287,10 @@ describe("msteams employee onboarding provisioning dry run", () => {
       addedToolAllowEntries: ["bundle-mcp", "salesforce__*"],
       sideEffects: ["employee-config-salesforce-connector-repair"],
     });
-    expect(repaired.config.mcp.servers.salesforce).toMatchObject({
+    const repairedConfig = repaired.config as typeof config & {
+      mcp: { servers: { salesforce: Record<string, unknown> } };
+    };
+    expect(repairedConfig.mcp.servers.salesforce).toMatchObject({
       command: "npx",
       connectionTimeoutMs: 90_000,
       requestTimeoutMs: 120_000,
