@@ -1,5 +1,4 @@
 // Msteams tests cover reply dispatcher plugin behavior.
-import { readFile } from "node:fs/promises";
 import { PlatformMessageNotDispatchedError } from "openclaw/plugin-sdk/error-runtime";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { createReplyDispatcher } from "openclaw/plugin-sdk/reply-runtime";
@@ -1162,7 +1161,7 @@ describe("createMSTeamsReplyDispatcher", () => {
     expect(sendMSTeamsMessagesMock).toHaveBeenCalledTimes(1);
   });
 
-  it("attaches long post-native progress remainder as a text file", async () => {
+  it("sends long post-native progress remainder as in-Teams continuation messages", async () => {
     renderReplyPayloadsToMessagesMock.mockImplementation(
       (payloads) =>
         payloads.map((payload) => ({ text: payload.text, mediaUrl: payload.mediaUrl })) as never,
@@ -1187,30 +1186,26 @@ describe("createMSTeamsReplyDispatcher", () => {
     expect(outcome?.messageIds?.length).toBeGreaterThan(2);
     const renderCall = renderReplyPayloadsToMessagesMock.mock.calls[0];
     expect(renderCall).toBeDefined();
-    const renderedPayload = renderCall![0][0] as ReplyPayload;
-    expect(renderedPayload.text).toContain("Full response attached as openclaw-full-response-");
-    expect(renderedPayload.mediaUrl).toMatch(/openclaw-full-response-.*\.txt$/u);
-    const backupPayloads = renderCall![0].slice(1) as ReplyPayload[];
-    expect(backupPayloads.length).toBeGreaterThan(1);
-    expect(backupPayloads[0]?.text).toContain("Full response backup part 1/");
-    expect(backupPayloads.at(-1)?.text).toContain("END OF FULL RESPONSE BACKUP");
-    const attachedText = await readFile(renderedPayload.mediaUrl!, "utf8");
-    expect(attachedText).toContain(remainder);
-    expect(attachedText.length).toBeGreaterThan(remainder.length);
+    const continuationPayloads = renderCall![0] as ReplyPayload[];
+    expect(continuationPayloads.length).toBeGreaterThan(1);
+    expect(continuationPayloads[0]?.text).toContain("Response continued 1/");
+    expect(continuationPayloads.at(-1)?.text).toContain("END OF FULL RESPONSE");
+    expect(continuationPayloads.some((payload) => payload.mediaUrl)).toBe(false);
+    expect(continuationPayloads.map((payload) => payload.text ?? "").join("\n")).toContain(
+      remainder.slice(0, 100),
+    );
     const sentMessages = sendMSTeamsMessagesMock.mock.calls.flatMap(([send]) => send.messages);
     expect(sentMessages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          mediaUrl: renderedPayload.mediaUrl,
+          text: expect.stringContaining("Response continued 1/"),
         }),
         expect.objectContaining({
-          text: expect.stringContaining("Full response backup part 1/"),
-        }),
-        expect.objectContaining({
-          text: expect.stringContaining("END OF FULL RESPONSE BACKUP"),
+          text: expect.stringContaining("END OF FULL RESPONSE"),
         }),
       ]),
     );
+    expect(sentMessages.some((message) => message.mediaUrl)).toBe(false);
   });
 
   it("settles delivery when sent-message ID observation throws", async () => {
