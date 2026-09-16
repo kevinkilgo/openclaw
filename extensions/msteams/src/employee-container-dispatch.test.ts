@@ -372,6 +372,7 @@ describe("msteams employee container dispatch", () => {
     expect(dispatched?.message).toContain(
       "Yes, <Name> is an available integration/module we have built/configured.",
     );
+    expect(dispatched?.message).toContain("search/load that connector tool surface first");
     expect(dispatched?.message).toContain(
       "Do i have access to Krisp from here yet? Is that an available module",
     );

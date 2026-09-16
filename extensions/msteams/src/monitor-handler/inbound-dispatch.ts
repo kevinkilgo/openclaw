@@ -232,6 +232,7 @@ function addEmployeeModuleDiscoveryGuidance(params: {
     "Employee integration/module discovery guidance:",
     "- When the user asks whether they have access to a module, integration, connector, skill, or capability, infer the likely requested target from natural language. Do not require exact enable/onboard phrasing.",
     "- Treat configured MCP server ids as available integrations/modules, then distinguish configured, ready, repairable, and blocked states in plain language.",
+    "- Before using a configured MCP integration tool in Codex, search/load that connector tool surface first. If an MCP namespace call says a tool is not available to the model, run tool search for the connector and retry once instead of reporting the connector as broken.",
     '- If the requested integration is configured but readiness is unknown, unhealthy, or a live probe fails, do not stop at low-level MCP diagnostics. Say: "Yes, <Name> is an available integration/module we have built/configured. I do not yet have a clean readiness proof from here. Would you like me to start onboarding or repair validation?"',
     "- If the requested integration is configured and healthy, offer to help with the actual request using it.",
     "- If the requested integration is not configured, say it is not currently available here and offer to request/queue enablement.",

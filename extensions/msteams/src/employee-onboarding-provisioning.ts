@@ -218,6 +218,7 @@ export type MSTeamsEmployeeSalesforceConnectorStatus = {
   requiredToolAllowEntries: MSTeamsEmployeeSalesforceToolAllowEntry[];
   presentToolAllowEntries: MSTeamsEmployeeSalesforceToolAllowEntry[];
   missingToolAllowEntries: MSTeamsEmployeeSalesforceToolAllowEntry[];
+  unsupportedTopLevelAgentToolAllowEntries: string[];
   messages: string[];
 };
 
@@ -274,6 +275,7 @@ export type MSTeamsEmployeeKrispConnectorStatus = {
   requiredToolAllowEntries: MSTeamsEmployeeKrispToolAllowEntry[];
   presentToolAllowEntries: MSTeamsEmployeeKrispToolAllowEntry[];
   missingToolAllowEntries: MSTeamsEmployeeKrispToolAllowEntry[];
+  unsupportedTopLevelAgentToolAllowEntries: string[];
   requiredSharedSecretKeys: MSTeamsEmployeeKrispSharedSecretKey[];
   messages: string[];
 };
@@ -529,6 +531,19 @@ function configMainAgentTools(config: unknown): Record<string, unknown> {
   return config.agents.entries.main.tools;
 }
 
+function configUnsupportedTopLevelAgentToolAllowEntries(config: unknown): string[] {
+  if (!isRecord(config) || !isRecord(config.agents)) {
+    return [];
+  }
+  return stringArray(config.agents.alsoAllow);
+}
+
+function omitUnsupportedTopLevelAgentToolAllow(configAgents: Record<string, unknown>) {
+  const repairedAgents = { ...configAgents };
+  delete repairedAgents.alsoAllow;
+  return repairedAgents;
+}
+
 function stringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((entry): entry is string => typeof entry === "string")
@@ -680,6 +695,8 @@ export function diagnoseMSTeamsEmployeeSalesforceConnectorConfig(
   const server = servers[MSTEAMS_EMPLOYEE_SALESFORCE_MCP_SERVER_ID];
   const tools = configMainAgentTools(config);
   const alsoAllow = stringArray(tools.alsoAllow);
+  const unsupportedTopLevelAgentToolAllowEntries =
+    configUnsupportedTopLevelAgentToolAllowEntries(config);
   const presentToolAllowEntries = REQUIRED_MSTEAMS_EMPLOYEE_SALESFORCE_TOOL_ALLOW_ENTRIES.filter(
     (entry) => alsoAllow.includes(entry),
   );
@@ -698,12 +715,20 @@ export function diagnoseMSTeamsEmployeeSalesforceConnectorConfig(
     ...(missingToolAllowEntries.length > 0
       ? [`Missing Salesforce tool allow entries: ${missingToolAllowEntries.join(", ")}`]
       : []),
+    ...(unsupportedTopLevelAgentToolAllowEntries.length > 0
+      ? [
+          `Unsupported top-level agents.alsoAllow entries must move to agents.entries.main.tools.alsoAllow: ${unsupportedTopLevelAgentToolAllowEntries.join(", ")}`,
+        ]
+      : []),
   ];
 
   return {
     status: mcpServerExplicitlyDisabled
       ? "blocked"
-      : !mcpServerPresent || !launcherShapeReady || missingToolAllowEntries.length > 0
+      : !mcpServerPresent ||
+          !launcherShapeReady ||
+          missingToolAllowEntries.length > 0 ||
+          unsupportedTopLevelAgentToolAllowEntries.length > 0
         ? "repairable"
         : "ready",
     requiredMcpServerId: MSTEAMS_EMPLOYEE_SALESFORCE_MCP_SERVER_ID,
@@ -713,6 +738,7 @@ export function diagnoseMSTeamsEmployeeSalesforceConnectorConfig(
     requiredToolAllowEntries: [...REQUIRED_MSTEAMS_EMPLOYEE_SALESFORCE_TOOL_ALLOW_ENTRIES],
     presentToolAllowEntries,
     missingToolAllowEntries,
+    unsupportedTopLevelAgentToolAllowEntries,
     messages: messages.length > 0 ? messages : ["Salesforce MCP connector config is ready."],
   };
 }
@@ -734,6 +760,7 @@ export function ensureMSTeamsEmployeeSalesforceConnectorConfig<
   const mcp = isRecord(config.mcp) ? config.mcp : {};
   const servers = isRecord(mcp.servers) ? mcp.servers : {};
   const agents = isRecord(config.agents) ? config.agents : {};
+  const repairedAgents = omitUnsupportedTopLevelAgentToolAllow(agents);
   const entries = isRecord(agents.entries) ? agents.entries : {};
   const main = isRecord(entries.main) ? entries.main : {};
   const tools = isRecord(main.tools) ? main.tools : {};
@@ -751,7 +778,7 @@ export function ensureMSTeamsEmployeeSalesforceConnectorConfig<
       },
     },
     agents: {
-      ...agents,
+      ...repairedAgents,
       entries: {
         ...entries,
         main: {
@@ -844,6 +871,8 @@ export function diagnoseMSTeamsEmployeeKrispConnectorConfig(
   const server = servers[MSTEAMS_EMPLOYEE_KRISP_MCP_SERVER_ID];
   const tools = configMainAgentTools(config);
   const alsoAllow = stringArray(tools.alsoAllow);
+  const unsupportedTopLevelAgentToolAllowEntries =
+    configUnsupportedTopLevelAgentToolAllowEntries(config);
   const presentToolAllowEntries = REQUIRED_MSTEAMS_EMPLOYEE_KRISP_TOOL_ALLOW_ENTRIES.filter(
     (entry) => alsoAllow.includes(entry),
   );
@@ -862,12 +891,20 @@ export function diagnoseMSTeamsEmployeeKrispConnectorConfig(
     ...(missingToolAllowEntries.length > 0
       ? [`Missing Krisp tool allow entries: ${missingToolAllowEntries.join(", ")}`]
       : []),
+    ...(unsupportedTopLevelAgentToolAllowEntries.length > 0
+      ? [
+          `Unsupported top-level agents.alsoAllow entries must move to agents.entries.main.tools.alsoAllow: ${unsupportedTopLevelAgentToolAllowEntries.join(", ")}`,
+        ]
+      : []),
   ];
 
   return {
     status: mcpServerExplicitlyDisabled
       ? "blocked"
-      : !mcpServerPresent || !launcherShapeReady || missingToolAllowEntries.length > 0
+      : !mcpServerPresent ||
+          !launcherShapeReady ||
+          missingToolAllowEntries.length > 0 ||
+          unsupportedTopLevelAgentToolAllowEntries.length > 0
         ? "repairable"
         : "ready",
     requiredMcpServerId: MSTEAMS_EMPLOYEE_KRISP_MCP_SERVER_ID,
@@ -877,6 +914,7 @@ export function diagnoseMSTeamsEmployeeKrispConnectorConfig(
     requiredToolAllowEntries: [...REQUIRED_MSTEAMS_EMPLOYEE_KRISP_TOOL_ALLOW_ENTRIES],
     presentToolAllowEntries,
     missingToolAllowEntries,
+    unsupportedTopLevelAgentToolAllowEntries,
     requiredSharedSecretKeys: [...REQUIRED_MSTEAMS_EMPLOYEE_KRISP_SHARED_SECRET_KEYS],
     messages: messages.length > 0 ? messages : ["Krisp MCP connector config is ready."],
   };
@@ -899,6 +937,7 @@ export function ensureMSTeamsEmployeeKrispConnectorConfig<TConfig extends Record
   const mcp = isRecord(config.mcp) ? config.mcp : {};
   const servers = isRecord(mcp.servers) ? mcp.servers : {};
   const agents = isRecord(config.agents) ? config.agents : {};
+  const repairedAgents = omitUnsupportedTopLevelAgentToolAllow(agents);
   const entries = isRecord(agents.entries) ? agents.entries : {};
   const main = isRecord(entries.main) ? entries.main : {};
   const tools = isRecord(main.tools) ? main.tools : {};
@@ -916,7 +955,7 @@ export function ensureMSTeamsEmployeeKrispConnectorConfig<TConfig extends Record
       },
     },
     agents: {
-      ...agents,
+      ...repairedAgents,
       entries: {
         ...entries,
         main: {

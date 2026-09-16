@@ -476,6 +476,48 @@ describe("msteams employee onboarding provisioning dry run", () => {
     expect(repaired.config.secrets).toBe(config.secrets);
   });
 
+  it("repairs invalid top-level Krisp tool exposure into the main-agent tool allow-list", () => {
+    const config = {
+      agents: {
+        alsoAllow: ["krisp__*"],
+        entries: {
+          main: {
+            tools: {
+              alsoAllow: ["bundle-mcp"],
+            },
+          },
+        },
+      },
+      mcp: {
+        servers: {
+          krisp: {
+            url: "https://mcp.krisp.ai/mcp",
+            transport: "streamable-http",
+            auth: "oauth",
+            connectionTimeoutMs: 45_000,
+            requestTimeoutMs: 120_000,
+          },
+        },
+      },
+    };
+
+    expect(diagnoseMSTeamsEmployeeKrispConnectorConfig(config)).toMatchObject({
+      status: "repairable",
+      missingToolAllowEntries: ["krisp__*"],
+      unsupportedTopLevelAgentToolAllowEntries: ["krisp__*"],
+    });
+
+    const repaired = ensureMSTeamsEmployeeKrispConnectorConfig(config);
+
+    expect(repaired.status).toMatchObject({
+      status: "ready",
+      missingToolAllowEntries: [],
+      unsupportedTopLevelAgentToolAllowEntries: [],
+    });
+    expect(repaired.config.agents.entries.main.tools.alsoAllow).toEqual(["bundle-mcp", "krisp__*"]);
+    expect("alsoAllow" in repaired.config.agents).toBe(false);
+  });
+
   it("requires Krisp shared BWS OAuth store proof and sample transcript smoke before ready", () => {
     const repaired = ensureMSTeamsEmployeeKrispConnectorConfig({
       agents: {
