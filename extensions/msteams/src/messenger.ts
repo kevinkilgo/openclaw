@@ -216,7 +216,7 @@ export function renderReplyPayloadsToMessages(
   options: MSTeamsReplyRenderOptions,
 ): MSTeamsRenderedMessage[] {
   const out: MSTeamsRenderedMessage[] = [];
-  const chunkLimit = Math.min(options.textChunkLimit, 4000);
+  const chunkLimit = Math.min(options.textChunkLimit, 2500);
   const chunkText = options.chunkText !== false;
   const chunkMode = options.chunkMode ?? "length";
   const mediaMode = options.mediaMode ?? "split";

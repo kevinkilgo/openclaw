@@ -373,9 +373,9 @@ const msteamsChannelOutbound: ChannelOutboundAdapter = {
   deliveryMode: "direct",
   chunker: chunkTextForOutbound,
   chunkerMode: "markdown",
-  textChunkLimit: 4000,
+  textChunkLimit: 2500,
   resolveEffectiveTextChunkLimit: ({ fallbackLimit }) =>
-    typeof fallbackLimit === "number" && fallbackLimit > 0 ? Math.min(fallbackLimit, 4000) : 4000,
+    typeof fallbackLimit === "number" && fallbackLimit > 0 ? Math.min(fallbackLimit, 2500) : 2500,
   pollMaxOptions: 12,
   shouldSuppressLocalPayloadPrompt: ({ cfg, accountId, payload, hint }) =>
     shouldSuppressLocalMSTeamsExecApprovalPrompt({ cfg, accountId, payload, hint }),
