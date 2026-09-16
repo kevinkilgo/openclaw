@@ -1186,11 +1186,19 @@ describe("createMSTeamsReplyDispatcher", () => {
     const renderCall = renderReplyPayloadsToMessagesMock.mock.calls[0];
     expect(renderCall).toBeDefined();
     const continuationPayloads = renderCall![0] as ReplyPayload[];
-    expect(continuationPayloads.length).toBeGreaterThan(1);
+    expect(continuationPayloads).toHaveLength(2);
     expect(continuationPayloads[0]?.text).toContain("Response continued 1/");
     expect(continuationPayloads.at(-1)?.text).toContain("END OF FULL RESPONSE");
     expect(continuationPayloads.some((payload) => payload.mediaUrl)).toBe(false);
-    expect(continuationPayloads.every((payload) => (payload.text?.length ?? 0) < 1_000)).toBe(true);
+    expect(continuationPayloads.every((payload) => (payload.text?.length ?? 0) <= 2_400)).toBe(
+      true,
+    );
+    const continuationText = continuationPayloads.map((payload) => payload.text ?? "").join("\n");
+    expect(continuationText).not.toMatch(/…|\.\.\.$|truncated/i);
+    expect(continuationText).toContain("Executive summary");
+    expect(continuationText).toContain("A".repeat(100));
+    expect(continuationText).toContain("B".repeat(100));
+    expect(continuationText).toContain("C".repeat(100));
   });
 
   it("sends long post-native progress remainder as in-Teams continuation messages", async () => {
@@ -1219,12 +1227,18 @@ describe("createMSTeamsReplyDispatcher", () => {
     const renderCall = renderReplyPayloadsToMessagesMock.mock.calls[0];
     expect(renderCall).toBeDefined();
     const continuationPayloads = renderCall![0] as ReplyPayload[];
-    expect(continuationPayloads.length).toBeGreaterThan(1);
+    expect(continuationPayloads.length).toBeLessThanOrEqual(5);
     expect(continuationPayloads[0]?.text).toContain("Response continued 1/");
     expect(continuationPayloads.at(-1)?.text).toContain("END OF FULL RESPONSE");
     expect(continuationPayloads.some((payload) => payload.mediaUrl)).toBe(false);
+    expect(continuationPayloads.every((payload) => (payload.text?.length ?? 0) <= 2_400)).toBe(
+      true,
+    );
     expect(continuationPayloads.map((payload) => payload.text ?? "").join("\n")).toContain(
       remainder.slice(0, 100),
+    );
+    expect(continuationPayloads.map((payload) => payload.text ?? "").join("\n")).not.toMatch(
+      /…|\.\.\.$|truncated/i,
     );
     const sentMessages = sendMSTeamsMessagesMock.mock.calls.flatMap(([send]) => send.messages);
     expect(sentMessages).toEqual(

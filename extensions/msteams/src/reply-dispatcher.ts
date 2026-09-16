@@ -89,12 +89,11 @@ export function createMSTeamsReplyDispatcher(params: {
    */
   const TYPING_KEEPALIVE_MAX_DURATION_MS = 10 * 60_000;
 
-  // Teams mobile can visually clip follow-up chat bubbles near the documented
-  // activity ceiling. Keep post-native continuation messages intentionally
-  // conservative so long replies stay inside Teams chat instead of requiring
-  // users to open a file/card.
-  const LONG_TEXT_CONTINUATION_THRESHOLD = 1_400;
-  const LONG_TEXT_CONTINUATION_CHUNK_LIMIT = 700;
+  // The Teams renderer below caps individual text messages at 2,500 chars.
+  // Leave margin for continuation labels/final marker while keeping each
+  // message large enough for Teams to show its native "See more" affordance.
+  const LONG_TEXT_CONTINUATION_THRESHOLD = 2_400;
+  const LONG_TEXT_CONTINUATION_RENDERED_LIMIT = 2_400;
 
   // Forward references: sendTypingIndicator is built before the stream
   // controller exists, but the keepalive tick needs to check stream state so
@@ -340,7 +339,15 @@ export function createMSTeamsReplyDispatcher(params: {
       return [payload];
     }
 
-    const chunks = splitTextForTeamsContinuation(payload.text, LONG_TEXT_CONTINUATION_CHUNK_LIMIT);
+    const continuationCount =
+      Math.ceil(payload.text.length / LONG_TEXT_CONTINUATION_RENDERED_LIMIT) || 1;
+    const maxLabelLength = `Response continued ${continuationCount}/${continuationCount}`.length;
+    const finalMarkerLength = "END OF FULL RESPONSE".length;
+    const bodyLimit = Math.max(
+      1_800,
+      LONG_TEXT_CONTINUATION_RENDERED_LIMIT - maxLabelLength - finalMarkerLength - 4,
+    );
+    const chunks = splitTextForTeamsContinuation(payload.text, bodyLimit);
     return chunks.map((chunk, index): ReplyPayload => {
       const ordinal = index + 1;
       const final = ordinal === chunks.length;
