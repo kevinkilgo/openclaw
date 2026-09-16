@@ -42,7 +42,7 @@ type DeferredReplacementEntry =
   | { kind: "payload"; payload: ReplyPayload }
   | { kind: "replacement"; payload: ReplyPayload };
 
-const MSTEAMS_NATIVE_STREAM_TEXT_LIMIT = 4000;
+const MSTEAMS_NATIVE_LONG_FINAL_PREVIEW_LIMIT = 12000;
 
 // The SDK throws StreamCancelledError synchronously from stream.emit/update
 // when the user pressed Stop in Teams (Teams replies 403 to the next chunk
@@ -121,6 +121,8 @@ export function createTeamsReplyStreamController(params: {
   let deferredReplacementEntries: DeferredReplacementEntry[] = [];
   let queuedFinalActivity: ReturnType<typeof finalStreamActivity> | undefined;
   let failedSegmentFallbackPrepared = false;
+  let longFinalLogicalContent: string | undefined;
+  let longFinalPostNativePayloads: ReplyPayload[] = [];
   const streamEvents = (stream as { events?: TeamsStreamChunkEvents } | undefined)?.events;
   let streamChunkSubscription: number | undefined;
 
@@ -207,16 +209,43 @@ export function createTeamsReplyStreamController(params: {
     channelData: params.feedbackLoopEnabled ? { feedbackLoopEnabled: true } : {},
   });
 
-  const shouldBypassNativeStreamForFinalPayload = (payload: ReplyPayload): boolean => {
+  const splitLongProgressFinalPayload = (
+    payload: ReplyPayload,
+  ):
+    | { previewPayload: ReplyPayload; postNativePayload: ReplyPayload; logicalContent: string }
+    | undefined => {
     if (
       streamMode !== "progress" ||
       nativeDispatchStarted ||
       typeof payload.text !== "string" ||
       !payload.text
     ) {
-      return false;
+      return undefined;
     }
-    return (finalStreamActivity(payload.text).text?.length ?? 0) > MSTEAMS_NATIVE_STREAM_TEXT_LIMIT;
+    if (
+      (finalStreamActivity(payload.text).text?.length ?? 0) <=
+      MSTEAMS_NATIVE_LONG_FINAL_PREVIEW_LIMIT
+    ) {
+      return undefined;
+    }
+    const hardLimit = Math.min(payload.text.length, MSTEAMS_NATIVE_LONG_FINAL_PREVIEW_LIMIT);
+    let splitAt = payload.text.lastIndexOf("\n\n", hardLimit);
+    if (splitAt < 4000) {
+      splitAt = payload.text.lastIndexOf("\n", hardLimit);
+    }
+    if (splitAt < 4000) {
+      splitAt = hardLimit;
+    }
+    const previewText = payload.text.slice(0, splitAt).trimEnd();
+    const remainingText = payload.text.slice(splitAt).trimStart();
+    if (!previewText || !remainingText) {
+      return undefined;
+    }
+    return {
+      previewPayload: { ...payload, text: previewText, mediaUrl: undefined, mediaUrls: undefined },
+      postNativePayload: { ...payload, text: remainingText },
+      logicalContent: payload.text,
+    };
   };
 
   const deferredReplacementLogicalContent = (): string | undefined => {
@@ -401,8 +430,32 @@ export function createTeamsReplyStreamController(params: {
       if (payload.text) {
         progressDraft.markFinalReplyStarted();
       }
-      if (shouldBypassNativeStreamForFinalPayload(payload)) {
-        return payload;
+      const longProgressFinal = splitLongProgressFinalPayload(payload);
+      if (longProgressFinal) {
+        try {
+          stream.emit(longProgressFinal.previewPayload.text!);
+          emittedText = longProgressFinal.previewPayload.text!;
+          nativeDispatchStarted = true;
+          tokensEmitted = true;
+          streamFinalizationPending = true;
+          pendingFinalPayload = fallbackPayloadForSuppressedFinal(longProgressFinal.previewPayload);
+          longFinalLogicalContent = longProgressFinal.logicalContent;
+          longFinalPostNativePayloads = [longProgressFinal.postNativePayload];
+          return undefined;
+        } catch (err) {
+          pendingFinalPayload = undefined;
+          longFinalLogicalContent = undefined;
+          longFinalPostNativePayloads = [];
+          if (isStreamCancelledError(err)) {
+            canceledLocally = true;
+            return undefined;
+          }
+          streamFailed = true;
+          params.log?.warn?.(
+            `msteams long final preview failed, falling back to block delivery: ${coerceErrorMessage(err)}`,
+          );
+          return payload;
+        }
       }
       if (replacementSettlementPending) {
         if (!replacementFinalPending) {
@@ -509,6 +562,8 @@ export function createTeamsReplyStreamController(params: {
         if (wasCanceled()) {
           pendingFinalPayload = undefined;
           deferredReplacementEntries = [];
+          longFinalLogicalContent = undefined;
+          longFinalPostNativePayloads = [];
           streamFinalizationPending = false;
           return acknowledgedNativeDelivery();
         }
@@ -575,12 +630,19 @@ export function createTeamsReplyStreamController(params: {
               : [];
           if (canceled) {
             deferredReplacementEntries = [];
+            longFinalLogicalContent = undefined;
+            longFinalPostNativePayloads = [];
           }
+          const longFinalPayloads = canceled ? [] : longFinalPostNativePayloads.splice(0);
+          logicalContent ??= canceled ? undefined : longFinalLogicalContent;
+          longFinalLogicalContent = undefined;
           return {
             ...acknowledgedNativeDelivery(),
             ...(!canceled && logicalContent ? { logicalContent } : {}),
             ...(fallbackPayload ? { fallbackPayload } : {}),
-            ...(postNativePayloads.length > 0 ? { postNativePayloads } : {}),
+            ...(postNativePayloads.length + longFinalPayloads.length > 0
+              ? { postNativePayloads: [...postNativePayloads, ...longFinalPayloads] }
+              : {}),
           };
         }
         const replacementFallback =
@@ -589,9 +651,14 @@ export function createTeamsReplyStreamController(params: {
             : undefined;
         pendingFinalPayload = undefined;
         const messageId = extractMessageId(result) ?? acknowledgedStreamId;
-        const postNativePayloads = replacementSettlementPending
-          ? takeDeferredReplacementPayloads(replacementFallback)
-          : [];
+        const postNativePayloads = [
+          ...(replacementSettlementPending
+            ? takeDeferredReplacementPayloads(replacementFallback)
+            : []),
+          ...longFinalPostNativePayloads.splice(0),
+        ];
+        logicalContent ??= longFinalLogicalContent;
+        longFinalLogicalContent = undefined;
         const nativeContent = replacementEmitFailed ? acknowledgedText || undefined : content;
         return {
           visibleReplySent: replacementEmitFailed ? Boolean(nativeContent) : true,
@@ -605,6 +672,8 @@ export function createTeamsReplyStreamController(params: {
           canceledLocally = true;
           pendingFinalPayload = undefined;
           deferredReplacementEntries = [];
+          longFinalLogicalContent = undefined;
+          longFinalPostNativePayloads = [];
           streamFinalizationPending = false;
           return acknowledgedNativeDelivery();
         }
@@ -626,9 +695,14 @@ export function createTeamsReplyStreamController(params: {
           !replacementSettlementPending && fallback
             ? fallbackPayloadAfterAcknowledgedText(fallback)
             : undefined;
-        const postNativePayloads = replacementSettlementPending
-          ? takeDeferredReplacementPayloads(replacementFallback)
-          : [];
+        const postNativePayloads = [
+          ...(replacementSettlementPending
+            ? takeDeferredReplacementPayloads(replacementFallback)
+            : []),
+          ...longFinalPostNativePayloads.splice(0),
+        ];
+        logicalContent ??= longFinalLogicalContent;
+        longFinalLogicalContent = undefined;
         return {
           ...acknowledgedNativeDelivery(),
           ...(logicalContent ? { logicalContent } : {}),

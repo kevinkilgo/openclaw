@@ -545,7 +545,7 @@ describe("createTeamsReplyStreamController", () => {
     expect(stream.close).not.toHaveBeenCalled();
   });
 
-  it("bypasses native progress streaming for long final text so block delivery can chunk", async () => {
+  it("keeps a native expandable preview for long progress finals and queues the remainder", async () => {
     const stream = makeStream();
     const ctrl = createTeamsReplyStreamController({
       allowProviderPreview: true,
@@ -554,12 +554,18 @@ describe("createTeamsReplyStreamController", () => {
       feedbackLoopEnabled: false,
       msteamsConfig: { streaming: { mode: "progress" } } as never,
     });
-    const longFinal = "x".repeat(4_001);
+    const longFinal = `${"x".repeat(12_000)}\n\n${"y".repeat(1200)}`;
 
-    expect(ctrl.preparePayload({ text: longFinal })).toEqual({ text: longFinal });
-    expect(stream.emit).not.toHaveBeenCalled();
-    expect(await ctrl.finalize()).toEqual({ visibleReplySent: false });
-    expect(stream.close).not.toHaveBeenCalled();
+    expect(ctrl.preparePayload({ text: longFinal })).toBeUndefined();
+    expect(stream.emit).toHaveBeenCalledWith("x".repeat(12_000));
+    await expect(ctrl.finalize()).resolves.toEqual({
+      visibleReplySent: true,
+      content: "x".repeat(12_000),
+      logicalContent: longFinal,
+      messageId: "stream-final",
+      postNativePayloads: [{ text: "y".repeat(1200) }],
+    });
+    expect(stream.close).toHaveBeenCalledTimes(1);
   });
 
   it("streams compact Teams progress lines when tool progress is enabled", async () => {

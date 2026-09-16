@@ -22,7 +22,7 @@ import { createMSTeamsPollStoreState } from "./polls.js";
 import { buildMSTeamsPresentationCard, MSTEAMS_PRESENTATION_CAPABILITIES } from "./presentation.js";
 import { sendAdaptiveCardMSTeams, sendMessageMSTeams, sendPollMSTeams } from "./send.js";
 
-const MSTEAMS_TEXT_CHUNK_LIMIT = 4000;
+const MSTEAMS_TEXT_CHUNK_LIMIT = 2500;
 
 function resolveMSTeamsEffectiveTextChunkLimit(configuredLimit?: number): number {
   return typeof configuredLimit === "number" && configuredLimit > 0

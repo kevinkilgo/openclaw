@@ -127,7 +127,7 @@ describe("msteamsOutbound cfg threading", () => {
   });
 
   it.each([
-    { configuredLimit: 6000, expectedLimit: 4000 },
+    { configuredLimit: 6000, expectedLimit: 2500 },
     { configuredLimit: 1000, expectedLimit: 1000 },
   ])(
     "resolves the same capped $configuredLimit-character limit for lightweight and runtime outbound",
@@ -479,12 +479,12 @@ describe("msteamsOutbound cfg threading", () => {
     expect(mocks.sendMessageMSTeams).toHaveBeenNthCalledWith(1, {
       cfg,
       to: "conversation:abc",
-      text: "x".repeat(4000),
+      text: "x".repeat(2500),
     });
     expect(mocks.sendMessageMSTeams).toHaveBeenNthCalledWith(2, {
       cfg,
       to: "conversation:abc",
-      text: "x",
+      text: "x".repeat(1501),
     });
     expect(result).toEqual({
       channel: "msteams",
@@ -494,7 +494,7 @@ describe("msteamsOutbound cfg threading", () => {
   });
 
   it.each([
-    { configuredLimit: 6000, textLength: 5000, expectedChunkLengths: [4000, 1000] },
+    { configuredLimit: 6000, textLength: 5000, expectedChunkLengths: [2500, 2500] },
     { configuredLimit: 1000, textLength: 1500, expectedChunkLengths: [1000, 500] },
   ])(
     "uses the capped $configuredLimit-character configured limit for fallback payloads",
