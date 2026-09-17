@@ -309,7 +309,7 @@ export function createMSTeamsReplyDispatcher(params: {
   const renderContinuationPayloads = (payloads: ReplyPayload[]) => {
     return renderReplyPayloadsToMessages(payloads, {
       textChunkLimit: params.textLimit,
-      chunkText: true,
+      chunkText: false,
       mediaMode: "split",
       tableMode,
       chunkMode,

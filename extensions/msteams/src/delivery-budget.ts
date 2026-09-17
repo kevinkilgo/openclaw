@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 
 const DEFAULT_TEAMS_ACTIVITY_BUDGET_BYTES = 80 * 1024;
-const DIGEST_SUMMARY_LIMIT = 1200;
+export const DESKTOP_SAFE_TEXT_DIGEST_THRESHOLD_CHARS = 1200;
+const DIGEST_SUMMARY_LIMIT = 600;
 const DIGEST_TRUNCATED_MARKER = "[preview truncated; see artifact for full response]";
 
 export type TeamsDeliveryBudgetMeasurement = {
@@ -78,7 +79,7 @@ export async function budgetTeamsActivity(params: {
 }): Promise<TeamsBudgetedActivity> {
   const budgetBytes = params.budgetBytes ?? DEFAULT_TEAMS_ACTIVITY_BUDGET_BYTES;
   const originalMeasurement = measureTeamsActivity(params.activity, budgetBytes);
-  if (!originalMeasurement.overBudget) {
+  if (!originalMeasurement.overBudget && !isDesktopUnsafeLongText(params.activity)) {
     return { kind: "normal", activity: params.activity, measurement: originalMeasurement };
   }
 
@@ -272,6 +273,16 @@ function extractArtifactContent(activity: Record<string, unknown>): string {
     return JSON.stringify({ attachments }, null, 2);
   }
   return JSON.stringify(activity, null, 2);
+}
+
+function isDesktopUnsafeLongText(activity: Record<string, unknown>): boolean {
+  if (typeof activity.text !== "string") {
+    return false;
+  }
+  const attachments = Array.isArray(activity.attachments) ? activity.attachments : [];
+  return (
+    attachments.length === 0 && activity.text.length > DESKTOP_SAFE_TEXT_DIGEST_THRESHOLD_CHARS
+  );
 }
 
 function describeActivity(activity: Record<string, unknown>): string {
