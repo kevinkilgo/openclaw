@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   budgetTeamsActivity,
+  DESKTOP_SAFE_TEXT_DIGEST_THRESHOLD_CHARS,
   measureTeamsActivity,
   sendTeamsActivityWithBudget,
 } from "./delivery-budget.js";
@@ -62,6 +63,33 @@ describe("TeamsDeliveryBudgeter", () => {
     expect(await readFile(budgeted.artifact.artifactPath, "utf8")).toBe(text);
   });
 
+  it("falls desktop-unsafe long text back to an artifact digest before Teams UI truncation", async () => {
+    const text = [
+      "Desktop Teams does not reliably expose See More for long bot messages.",
+      "A".repeat(DESKTOP_SAFE_TEXT_DIGEST_THRESHOLD_CHARS + 50),
+      "END OF FULL RESPONSE",
+    ].join("\n");
+
+    const budgeted = await budgetTeamsActivity({
+      activity: { type: "message", text },
+      artifactDir,
+      runId: "run-desktop-unsafe",
+    });
+
+    expect(measureTeamsActivity({ type: "message", text }).overBudget).toBe(false);
+    expect(budgeted.kind).toBe("artifact-digest");
+    if (budgeted.kind !== "artifact-digest") {
+      throw new Error("expected artifact digest");
+    }
+    expect(budgeted.activity.text).toContain("Run id: run-desktop-unsafe");
+    expect(budgeted.activity.text).toContain("[preview truncated; see artifact for full response]");
+    expect(String(budgeted.activity.text)).not.toContain("END OF FULL RESPONSE");
+    expect(String(budgeted.activity.text).length).toBeLessThan(
+      DESKTOP_SAFE_TEXT_DIGEST_THRESHOLD_CHARS,
+    );
+    expect(await readFile(budgeted.artifact.artifactPath, "utf8")).toBe(text);
+  });
+
   it("falls oversized Adaptive Cards back to an artifact digest", async () => {
     const card = {
       type: "AdaptiveCard",
@@ -95,7 +123,7 @@ describe("TeamsDeliveryBudgeter", () => {
   });
 
   it("uses artifact fallback after a simulated 413 without retrying the same oversized payload", async () => {
-    const originalText = "413 fallback response.\n".repeat(5000);
+    const originalText = "413 fallback response.\n".repeat(20);
     const sent: Array<Record<string, unknown>> = [];
     const send = vi.fn(async (activity: Record<string, unknown>) => {
       sent.push(activity);

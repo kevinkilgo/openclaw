@@ -1187,7 +1187,7 @@ describe("createMSTeamsReplyDispatcher", () => {
     });
     expect(renderReplyPayloadsToMessagesMock).toHaveBeenCalledWith(
       [{ text: longReply }],
-      expect.any(Object),
+      expect.objectContaining({ chunkText: false }),
     );
     expect(sendMSTeamsMessagesMock).toHaveBeenCalledTimes(1);
     expect(sendMSTeamsMessagesMock.mock.calls[0]?.[0].messages).toEqual([{ text: longReply }]);
@@ -1226,7 +1226,7 @@ describe("createMSTeamsReplyDispatcher", () => {
     expect(outcome?.messageIds).toContain("post-native-digest-id");
     expect(renderReplyPayloadsToMessagesMock).toHaveBeenCalledWith(
       [{ text: expect.stringContaining(remainder.slice(0, 100)) }],
-      expect.any(Object),
+      expect.objectContaining({ chunkText: false }),
     );
     expect(sendMSTeamsMessagesMock).toHaveBeenCalledTimes(1);
     expect(sendMSTeamsMessagesMock.mock.calls[0]?.[0].messages?.[0]?.text).toContain(
