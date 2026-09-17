@@ -400,6 +400,36 @@ describe("msteams messenger", () => {
       expect(sendActivity).not.toHaveBeenCalled();
     });
 
+    it("marks artifact digest write failures as never dispatched", async () => {
+      const tmpDir = await mkdtemp(path.join(resolvePreferredOpenClawTmpDir(), "msteams-budget-"));
+      const artifactParentFile = path.join(tmpDir, "not-a-directory");
+      const previousArtifactDir = process.env.OPENCLAW_MSTEAMS_ARTIFACT_DIR;
+      await writeFile(artifactParentFile, "blocks artifact directory creation");
+      process.env.OPENCLAW_MSTEAMS_ARTIFACT_DIR = path.join(artifactParentFile, "artifacts");
+      const sendActivity = vi.fn(async () => ({ id: "should-not-send" }));
+
+      try {
+        await expect(
+          sendMSTeamsMessages({
+            replyStyle: "thread",
+            app: createMockApp(),
+            appId: "app123",
+            conversationRef: baseRef,
+            context: { sendActivity },
+            messages: [{ text: "artifact write failure line\n".repeat(5000) }],
+          }),
+        ).rejects.toBeInstanceOf(PlatformMessageNotDispatchedError);
+        expect(sendActivity).not.toHaveBeenCalled();
+      } finally {
+        if (previousArtifactDir === undefined) {
+          delete process.env.OPENCLAW_MSTEAMS_ARTIFACT_DIR;
+        } else {
+          process.env.OPENCLAW_MSTEAMS_ARTIFACT_DIR = previousArtifactDir;
+        }
+        await rm(tmpDir, { recursive: true, force: true });
+      }
+    });
+
     it("loads uppercase file URLs before sending personal images", async () => {
       const tmpDir = await mkdtemp(
         path.join(resolvePreferredOpenClawTmpDir(), "msteams-file-url-"),
