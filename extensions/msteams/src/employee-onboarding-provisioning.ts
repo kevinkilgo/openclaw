@@ -1,6 +1,6 @@
 // Msteams plugin module renders dry-run employee-agent provisioning plans.
 import { createHash } from "node:crypto";
-import { isRecord } from "@openclaw/normalization-core/record-coerce";
+import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import type {
   MSTeamsEmployeeOnboardingRequest,
   MSTeamsEmployeeOnboardingRequestStore,
