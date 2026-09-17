@@ -4,7 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 
-export const DEFAULT_TEAMS_ACTIVITY_BUDGET_BYTES = 80 * 1024;
+const DEFAULT_TEAMS_ACTIVITY_BUDGET_BYTES = 80 * 1024;
 const DIGEST_SUMMARY_LIMIT = 1200;
 const DIGEST_TRUNCATED_MARKER = "[preview truncated; see artifact for full response]";
 
@@ -16,7 +16,7 @@ export type TeamsDeliveryBudgetMeasurement = {
   overBudget: boolean;
 };
 
-export type TeamsDeliveryArtifact = {
+type TeamsDeliveryArtifact = {
   artifactId: string;
   artifactPath: string;
   hash: string;
@@ -39,7 +39,7 @@ export type TeamsBudgetedActivity =
       digestMeasurement: TeamsDeliveryBudgetMeasurement;
     };
 
-export function serializeTeamsActivity(activity: unknown): string {
+function serializeTeamsActivity(activity: unknown): string {
   return JSON.stringify(activity ?? null);
 }
 
@@ -60,7 +60,7 @@ export function measureTeamsActivity(
   };
 }
 
-export function isTeamsMessageSizeError(err: unknown): boolean {
+function isTeamsMessageSizeError(err: unknown): boolean {
   const direct = extractStatusCode(err);
   if (direct === 413) {
     return true;
@@ -196,10 +196,7 @@ async function buildArtifactDigestActivity(params: {
   const runId =
     params.runId?.trim() || extractRunId(params.activity) || `msteams-run-${hash.slice(0, 12)}`;
   const artifactId = `${runId}-${hash.slice(0, 16)}.md`;
-  const artifactDir =
-    params.artifactDir ??
-    process.env.OPENCLAW_MSTEAMS_ARTIFACT_DIR ??
-    join(process.cwd(), ".artifacts", "msteams-responses");
+  const artifactDir = params.artifactDir ?? join(process.cwd(), ".artifacts", "msteams-responses");
   await mkdir(artifactDir, { recursive: true });
   const artifactPath = join(artifactDir, artifactId);
   await writeFile(artifactPath, content, "utf8");

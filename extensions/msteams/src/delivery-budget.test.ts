@@ -6,7 +6,6 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   budgetTeamsActivity,
-  DEFAULT_TEAMS_ACTIVITY_BUDGET_BYTES,
   measureTeamsActivity,
   sendTeamsActivityWithBudget,
 } from "./delivery-budget.js";
@@ -112,7 +111,7 @@ describe("TeamsDeliveryBudgeter", () => {
       activity: { type: "message", text: originalText },
       send,
       artifactDir,
-      budgetBytes: DEFAULT_TEAMS_ACTIVITY_BUDGET_BYTES * 4,
+      budgetBytes: 80 * 1024 * 4,
       runId: "run-413",
     });
 
