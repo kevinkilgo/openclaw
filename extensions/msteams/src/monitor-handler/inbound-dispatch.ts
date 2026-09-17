@@ -20,6 +20,7 @@ import {
 import { createChannelHistoryWindow, type HistoryEntry } from "openclaw/plugin-sdk/reply-history";
 import { sliceUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import type { OpenClawConfig, ReplyPayload, RuntimeEnv } from "../../runtime-api.js";
+import { sendTeamsTurnActivityWithBudget } from "../delivery-budget.js";
 import { formatUnknownError } from "../errors.js";
 import type { MSTeamsMessageHandlerDeps } from "../monitor-handler.types.js";
 import { resolveMSTeamsAllowlistMatch, resolveMSTeamsReplyPolicy } from "../policy.js";
@@ -1116,7 +1117,10 @@ export async function dispatchMSTeamsInboundTurn(params: {
       throw err;
     }
     try {
-      await context.sendActivity("⚠️ Something went wrong. Please try again.");
+      await sendTeamsTurnActivityWithBudget({
+        activity: "⚠️ Something went wrong. Please try again.",
+        send: context.sendActivity,
+      });
     } catch {
       // Best effort.
     }

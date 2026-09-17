@@ -1,3 +1,7 @@
+import {
+  sendTeamsTurnActivityWithBudget,
+  updateTeamsTurnActivityWithBudget,
+} from "./delivery-budget.js";
 // Msteams plugin module implements file consent invoke behavior.
 import { formatUnknownError } from "./errors.js";
 import { buildFileInfoCard, parseFileConsentInvoke, uploadToConsentUrl } from "./file-consent.js";
@@ -56,7 +60,10 @@ async function handleMSTeamsFileConsentInvoke(
         receivedConversationId: invokeConversationId || undefined,
       });
       if (consentResponse.action === "accept") {
-        await context.sendActivity(expiredUploadMessage);
+        await sendTeamsTurnActivityWithBudget({
+          activity: expiredUploadMessage,
+          send: context.sendActivity,
+        });
       }
       return true;
     }
@@ -85,23 +92,32 @@ async function handleMSTeamsFileConsentInvoke(
         });
 
         if (!pendingFile.consentCardActivityId) {
-          await context.sendActivity({
-            type: "message",
-            attachments: [fileInfoCard],
+          await sendTeamsTurnActivityWithBudget({
+            activity: {
+              type: "message",
+              attachments: [fileInfoCard],
+            },
+            send: context.sendActivity,
           });
         }
 
         if (pendingFile.consentCardActivityId) {
           try {
-            await context.updateActivity({
-              id: pendingFile.consentCardActivityId,
-              type: "message",
-              attachments: [fileInfoCard],
+            await updateTeamsTurnActivityWithBudget({
+              activity: {
+                id: pendingFile.consentCardActivityId,
+                type: "message",
+                attachments: [fileInfoCard],
+              },
+              update: context.updateActivity,
             });
           } catch {
-            await context.sendActivity({
-              type: "message",
-              attachments: [fileInfoCard],
+            await sendTeamsTurnActivityWithBudget({
+              activity: {
+                type: "message",
+                attachments: [fileInfoCard],
+              },
+              send: context.sendActivity,
             });
           }
         }
@@ -113,14 +129,20 @@ async function handleMSTeamsFileConsentInvoke(
         });
       } catch (err) {
         log.error("file upload failed", { uploadId, error: formatUnknownError(err) });
-        await context.sendActivity("File upload failed. Please try again.");
+        await sendTeamsTurnActivityWithBudget({
+          activity: "File upload failed. Please try again.",
+          send: context.sendActivity,
+        });
       } finally {
         removePendingUpload(uploadId);
         await removePendingUploadFs(uploadId);
       }
     } else {
       log.debug?.("pending file not found for consent", { uploadId });
-      await context.sendActivity(expiredUploadMessage);
+      await sendTeamsTurnActivityWithBudget({
+        activity: expiredUploadMessage,
+        send: context.sendActivity,
+      });
     }
   } else {
     log.debug?.("user declined file consent", { uploadId });

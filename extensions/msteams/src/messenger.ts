@@ -17,6 +17,7 @@ import type { MarkdownTableMode, MSTeamsReplyStyle, OpenClawConfig } from "../ru
 import type { MSTeamsAccessTokenProvider } from "./attachments/types.js";
 import type { MSTeamsSdkCloudOptions } from "./cloud.js";
 import type { StoredConversationReference } from "./conversation-store.js";
+import { sendTeamsActivityWithBudget } from "./delivery-budget.js";
 import { classifyMSTeamsSendError } from "./errors.js";
 import { prepareFileConsentActivity, requiresFileConsent } from "./file-consent-helpers.js";
 import { formatMSTeamsMarkdown } from "./format.js";
@@ -464,7 +465,11 @@ export async function sendMSTeamsMessages(params: {
           delete activity["_pendingUploadId"];
 
           providerDispatchStarted = true;
-          return await sendFn(activity);
+          const delivered = await sendTeamsActivityWithBudget({
+            activity,
+            send: sendFn,
+          });
+          return delivered.result;
         },
         {
           messageIndex,

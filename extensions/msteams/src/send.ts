@@ -8,6 +8,7 @@ import {
 import { resolveMarkdownTableMode } from "openclaw/plugin-sdk/markdown-table-runtime";
 import type { OutboundMediaLoadOptions } from "openclaw/plugin-sdk/outbound-media";
 import { loadOutboundMediaFromUrl, type OpenClawConfig } from "../runtime-api.js";
+import { budgetTeamsActivity, sendTeamsActivityWithBudget } from "./delivery-budget.js";
 import {
   classifyMSTeamsSendError,
   formatMSTeamsSendErrorHint,
@@ -422,11 +423,15 @@ async function sendProactiveActivityRaw({
   activity,
 }: ProactiveActivityRawParams): Promise<string> {
   const baseRef = buildConversationReference(ctx.ref);
-  const response = await sendMSTeamsActivityWithReference(ctx.app, baseRef, activity, {
-    ...(ctx.threadActivityId ? { threadActivityId: ctx.threadActivityId } : {}),
-    serviceUrlBoundary: ctx.sdkCloudOptions,
+  const response = await sendTeamsActivityWithBudget({
+    activity,
+    send: async (budgetedActivity) =>
+      await sendMSTeamsActivityWithReference(ctx.app, baseRef, budgetedActivity, {
+        ...(ctx.threadActivityId ? { threadActivityId: ctx.threadActivityId } : {}),
+        serviceUrlBoundary: ctx.sdkCloudOptions,
+      }),
   });
-  return extractMessageId(response) ?? "unknown";
+  return extractMessageId(response.result) ?? "unknown";
 }
 
 async function sendProactiveActivity({
@@ -603,11 +608,37 @@ async function updateMSTeamsMessageActivity(
 
   try {
     const baseRef = buildConversationReference(ref);
-    await updateMSTeamsActivityWithReference(app, baseRef, activityId, activity, {
+    const budgeted = await budgetTeamsActivity({ activity });
+    await updateMSTeamsActivityWithReference(app, baseRef, activityId, budgeted.activity, {
       serviceUrlBoundary: sdkCloudOptions,
     });
   } catch (err) {
-    throw createMSTeamsSendError("msteams edit", err);
+    log.warn?.("msteams updateActivity failed; sending bounded fallback status", {
+      conversationId,
+      activityId,
+      error: formatUnknownError(err),
+    });
+    try {
+      const baseRef = buildConversationReference(ref);
+      await sendTeamsActivityWithBudget({
+        activity: {
+          type: "message",
+          text: "Teams could not update the previous status card. Current status is available in the latest run output.",
+          channelData: {
+            openclawDeliveryEnvelope: {
+              monitorFinding: "msteams-updateActivity-failed",
+              activityId,
+            },
+          },
+        },
+        send: async (fallbackActivity) =>
+          await sendMSTeamsActivityWithReference(app, baseRef, fallbackActivity, {
+            serviceUrlBoundary: sdkCloudOptions,
+          }),
+      });
+    } catch (fallbackErr) {
+      throw createMSTeamsSendError("msteams edit fallback", fallbackErr);
+    }
   }
 
   log.info("edited proactive message", { conversationId, activityId });

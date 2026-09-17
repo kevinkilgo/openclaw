@@ -12,6 +12,7 @@ import {
 import { createRuntimeConfigReader } from "openclaw/plugin-sdk/runtime-config-snapshot";
 import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import { DEFAULT_ACCOUNT_ID } from "../../runtime-api.js";
+import { sendTeamsTurnActivityWithBudget } from "../delivery-budget.js";
 import {
   createMSTeamsEmployeeOnboardingDecisionTrace,
   resolveMSTeamsEmployeeOnboardingAcknowledgement,
@@ -305,11 +306,12 @@ export function createMSTeamsMessageHandler(deps: MSTeamsMessageHandlerDeps) {
         runtime.error("msteams employee onboarding request store unavailable");
       }
       try {
-        await context.sendActivity(
-          persisted
+        await sendTeamsTurnActivityWithBudget({
+          activity: persisted
             ? resolveMSTeamsEmployeeOnboardingAcknowledgement(cfg)
             : resolveMSTeamsEmployeeOnboardingFailureAcknowledgement(cfg),
-        );
+          send: context.sendActivity,
+        });
       } catch (err) {
         log.debug?.("failed to send msteams employee onboarding acknowledgement", {
           requestId: employeeOnboardingDecision.request.id,
@@ -335,7 +337,10 @@ export function createMSTeamsMessageHandler(deps: MSTeamsMessageHandlerDeps) {
               runtime,
               routeAgentId: provisionedRoute.agentId,
               sendText: async (message) => {
-                await context.sendActivity(message);
+                await sendTeamsTurnActivityWithBudget({
+                  activity: message,
+                  send: context.sendActivity,
+                });
               },
               log,
             });

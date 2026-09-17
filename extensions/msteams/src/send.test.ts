@@ -609,8 +609,28 @@ describe("editMessageMSTeams", () => {
     );
   });
 
-  it("throws a descriptive error when update fails", async () => {
-    mockProactiveSendContextFailure("Service unavailable");
+  it("sends a bounded fallback status when updateActivity fails", async () => {
+    const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const mockApp = createMockApp();
+    mockState.updateMSTeamsActivityWithReference.mockRejectedValueOnce(
+      Object.assign(new Error("Service unavailable"), { statusCode: 500 }),
+    );
+    mockState.sendMSTeamsActivityWithReference.mockResolvedValueOnce({ id: "fallback-status" });
+    mockState.resolveMSTeamsSendContext.mockResolvedValue({
+      app: mockApp,
+      appId: "app-id",
+      conversationId: "19:conversation@thread.tacv2",
+      ref: {
+        user: { id: "user-1" },
+        agent: { id: "agent-1" },
+        conversation: { id: "19:conversation@thread.tacv2", conversationType: "personal" },
+        channelId: "msteams",
+      },
+      log,
+      conversationType: "personal",
+      sdkCloudOptions: { cloud: "Public" },
+      tokenProvider: {},
+    });
 
     await expect(
       editMessageMSTeams({
@@ -619,7 +639,31 @@ describe("editMessageMSTeams", () => {
         activityId: "activity-123",
         text: "Updated text",
       }),
-    ).rejects.toThrow("msteams edit failed");
+    ).resolves.toEqual({ conversationId: "19:conversation@thread.tacv2" });
+
+    expect(log.warn).toHaveBeenCalledWith(
+      "msteams updateActivity failed; sending bounded fallback status",
+      expect.objectContaining({
+        activityId: "activity-123",
+        conversationId: "19:conversation@thread.tacv2",
+      }),
+    );
+    expect(mockState.sendMSTeamsActivityWithReference).toHaveBeenCalledWith(
+      mockApp,
+      expect.objectContaining({
+        conversation: { id: "19:conversation@thread.tacv2", conversationType: "personal" },
+      }),
+      expect.objectContaining({
+        type: "message",
+        text: expect.stringContaining("could not update"),
+        channelData: expect.objectContaining({
+          openclawDeliveryEnvelope: expect.objectContaining({
+            monitorFinding: "msteams-updateActivity-failed",
+          }),
+        }),
+      }),
+      { serviceUrlBoundary: { cloud: "Public" } },
+    );
   });
 
   it("updates an existing activity with a replacement Adaptive Card", async () => {
