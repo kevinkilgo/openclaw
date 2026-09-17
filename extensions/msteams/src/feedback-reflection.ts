@@ -7,6 +7,7 @@ import { normalizeOptionalLowercaseString } from "openclaw/plugin-sdk/string-coe
 import type { OpenClawConfig } from "../runtime-api.js";
 import { resolveMSTeamsSdkCloudOptions } from "./cloud.js";
 import type { StoredConversationReference } from "./conversation-store.js";
+import { sendTeamsTurnActivityWithBudget } from "./delivery-budget.js";
 import { formatUnknownError } from "./errors.js";
 import { storeSessionLearning } from "./feedback-reflection-store.js";
 import { buildConversationReference } from "./messenger.js";
@@ -131,12 +132,16 @@ export async function runFeedbackReflection(params: RunFeedbackReflectionParams)
   }
 
   try {
-    await sendMSTeamsActivityWithReference(
-      params.app,
-      buildConversationReference(params.conversationRef),
-      { type: "message", text: reflection.userMessage! },
-      { serviceUrlBoundary: resolveMSTeamsSdkCloudOptions(cfg.channels?.msteams) },
-    );
+    await sendTeamsTurnActivityWithBudget({
+      activity: { type: "message", text: reflection.userMessage! },
+      send: async (activity) =>
+        await sendMSTeamsActivityWithReference(
+          params.app,
+          buildConversationReference(params.conversationRef),
+          activity,
+          { serviceUrlBoundary: resolveMSTeamsSdkCloudOptions(cfg.channels?.msteams) },
+        ),
+    });
     log.info("sent reflection follow-up", { sessionKey });
   } catch (err) {
     log.debug?.("failed to send reflection follow-up", { error: formatUnknownError(err) });

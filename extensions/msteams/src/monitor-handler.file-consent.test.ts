@@ -302,9 +302,10 @@ describe("msteams file consent invoke authz", () => {
 
     // The expiry message is the only sendActivity call now — the HTTP 200
     // InvokeResponse comes from the SDK's typed-route default.
-    expect(sendActivity).toHaveBeenCalledWith(
-      "The file upload request has expired. Please try sending the file again.",
-    );
+    expect(sendActivity).toHaveBeenCalledWith({
+      type: "message",
+      text: "The file upload request has expired. Please try sending the file again.",
+    });
 
     expect(fileConsentMockState.uploadToConsentUrl).not.toHaveBeenCalled();
     expectPendingUploadFields(uploadId);

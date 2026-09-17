@@ -27,6 +27,7 @@ import {
 import type { MSTeamsAccessTokenProvider } from "./attachments/types.js";
 import { resolveMSTeamsSdkCloudOptions } from "./cloud.js";
 import type { StoredConversationReference } from "./conversation-store.js";
+import { sendTeamsTurnActivityWithBudget } from "./delivery-budget.js";
 import {
   classifyMSTeamsSendError,
   formatMSTeamsDeliveryFailureGuidance,
@@ -108,16 +109,20 @@ export function createMSTeamsReplyDispatcher(params: {
   const rawSendTypingIndicator = async () => {
     await withRevokedProxyFallback({
       run: async () => {
-        await params.context.sendActivity({ type: "typing" });
+        await sendTeamsTurnActivityWithBudget({
+          activity: { type: "typing" },
+          send: params.context.sendActivity,
+        });
       },
       onRevoked: async () => {
         const baseRef = buildConversationReference(params.conversationRef);
-        await sendMSTeamsActivityWithReference(
-          params.app,
-          baseRef,
-          { type: "typing" },
-          { serviceUrlBoundary: resolveMSTeamsSdkCloudOptions(msteamsCfg) },
-        );
+        await sendTeamsTurnActivityWithBudget({
+          activity: { type: "typing" },
+          send: async (activity) =>
+            await sendMSTeamsActivityWithReference(params.app, baseRef, activity, {
+              serviceUrlBoundary: resolveMSTeamsSdkCloudOptions(msteamsCfg),
+            }),
+        });
       },
       onRevokedLog: () => {
         params.log.debug?.("turn context revoked, sending typing via proactive messaging");

@@ -1,5 +1,10 @@
 // Microsoft Teams plugin reconstructs transport context for durable ingress replay.
 import type { MSTeamsSdkCloudOptions } from "./cloud.js";
+import {
+  normalizeTeamsActivityRecord,
+  sendTeamsTurnActivityWithBudget,
+  updateTeamsTurnActivityWithBudget,
+} from "./delivery-budget.js";
 import { extractMSTeamsConversationMessageId, normalizeMSTeamsConversationId } from "./inbound.js";
 import {
   deleteMSTeamsActivityWithReference,
@@ -47,8 +52,19 @@ export function createMSTeamsReplayContext(
     ...(threadActivityId ? { threadActivityId } : {}),
     serviceUrlBoundary,
   };
-  const sendActivity: MSTeamsTurnContext["sendActivity"] = (outbound) =>
-    sendMSTeamsActivityWithReference(app, reference, outbound, proactiveOptions);
+  const sendActivity: MSTeamsTurnContext["sendActivity"] = async (outbound) =>
+    (
+      await sendTeamsTurnActivityWithBudget({
+        activity: outbound,
+        send: async (budgetedActivity) =>
+          await sendMSTeamsActivityWithReference(
+            app,
+            reference,
+            budgetedActivity,
+            proactiveOptions,
+          ),
+      })
+    ).result;
   return {
     activity,
     sendActivity,
@@ -60,13 +76,18 @@ export function createMSTeamsReplayContext(
       return results;
     },
     updateActivity: async (outbound) => {
-      const result = await updateMSTeamsActivityWithReference(
-        app,
-        reference,
-        typeof outbound.id === "string" ? outbound.id : "",
-        outbound,
-        proactiveOptions,
-      );
+      const activity = normalizeTeamsActivityRecord(outbound);
+      const result = await updateTeamsTurnActivityWithBudget({
+        activity,
+        update: async (budgetedActivity) =>
+          await updateMSTeamsActivityWithReference(
+            app,
+            reference,
+            typeof activity.id === "string" ? activity.id : "",
+            budgetedActivity,
+            proactiveOptions,
+          ),
+      });
       // SAFETY: the SDK update result exposes only the optional activity id used by this adapter.
       return result as { id?: string } | void;
     },

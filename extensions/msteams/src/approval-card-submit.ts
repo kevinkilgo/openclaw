@@ -7,6 +7,7 @@ import {
   readMSTeamsApprovalActionToken,
 } from "./approval-card-actions.js";
 import { buildMSTeamsCanonicalApprovalTerminalCard } from "./approval-card.js";
+import { updateTeamsTurnActivityWithBudget } from "./delivery-budget.js";
 import { normalizeMSTeamsConversationId } from "./inbound.js";
 import type { MSTeamsMessageHandlerDeps } from "./monitor-handler.types.js";
 import type { MSTeamsTurnContext } from "./sdk-types.js";
@@ -86,15 +87,18 @@ export async function maybeHandleMSTeamsApprovalCardSubmit(params: {
       accountId: DEFAULT_ACCOUNT_ID,
       senderId,
     });
-    await context.updateActivity({
-      type: "message",
-      id: consumed.activityId,
-      attachments: [
-        {
-          contentType: "application/vnd.microsoft.card.adaptive",
-          content: buildMSTeamsCanonicalApprovalTerminalCard(result),
-        },
-      ],
+    await updateTeamsTurnActivityWithBudget({
+      activity: {
+        type: "message",
+        id: consumed.activityId,
+        attachments: [
+          {
+            contentType: "application/vnd.microsoft.card.adaptive",
+            content: buildMSTeamsCanonicalApprovalTerminalCard(result),
+          },
+        ],
+      },
+      update: context.updateActivity,
     });
     return result;
   });

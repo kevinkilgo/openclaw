@@ -2,6 +2,7 @@
 import { normalizeOptionalLowercaseString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { serializeMSTeamsAdaptiveCardActionValue } from "./adaptive-card-submit.js";
 import { maybeHandleMSTeamsApprovalCardSubmit } from "./approval-card-submit.js";
+import { sendTeamsTurnActivityWithBudget } from "./delivery-budget.js";
 import { formatUnknownError } from "./errors.js";
 import type { MSTeamsMessageHandlerDeps } from "./monitor-handler.types.js";
 import { resolveMSTeamsSenderAccess } from "./monitor-handler/access.js";
@@ -234,14 +235,17 @@ export function registerMSTeamsHandlers<T extends MSTeamsActivityHandler>(
             promptStarters: msteamsCfg?.promptStarters,
           });
           try {
-            await ctx.sendActivity({
-              type: "message",
-              attachments: [
-                {
-                  contentType: "application/vnd.microsoft.card.adaptive",
-                  content: card,
-                },
-              ],
+            await sendTeamsTurnActivityWithBudget({
+              activity: {
+                type: "message",
+                attachments: [
+                  {
+                    contentType: "application/vnd.microsoft.card.adaptive",
+                    content: card,
+                  },
+                ],
+              },
+              send: ctx.sendActivity,
             });
             deps.log.info("sent welcome card");
           } catch (err) {
@@ -250,7 +254,10 @@ export function registerMSTeamsHandlers<T extends MSTeamsActivityHandler>(
         } else if (!isPersonal && msteamsCfg?.groupWelcomeCard === true) {
           const botName = ctx.activity?.recipient?.name ?? undefined;
           try {
-            await ctx.sendActivity(buildGroupWelcomeText(botName));
+            await sendTeamsTurnActivityWithBudget({
+              activity: buildGroupWelcomeText(botName),
+              send: ctx.sendActivity,
+            });
             deps.log.info("sent group welcome message");
           } catch (err) {
             deps.log.debug?.("failed to send group welcome", { error: formatUnknownError(err) });
