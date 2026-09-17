@@ -482,6 +482,43 @@ describe("msteams employee container dispatch", () => {
     expect(runtime.error).not.toHaveBeenCalled();
   });
 
+  it("starts Codex device-code login when agent.wait returns an OpenAI subscription cooldown", async () => {
+    gatewayRuntimeMockState.callGatewayFromCli.mockReset();
+    gatewayRuntimeMockState.callGatewayFromCli
+      .mockResolvedValueOnce({ runId: "run-cooldown" })
+      .mockResolvedValueOnce({
+        status: "error",
+        error:
+          "You've reached your Codex subscription usage limit. Next reset in 2 days, Sep 19 at 8:10 AM UTC. Wait until the reset time, use another Codex account if available, or switch to another configured model/provider.",
+      });
+    const cfg = createConfig();
+    const runtime = { error: vi.fn() } as unknown as RuntimeEnv;
+    const handler = createMSTeamsMessageHandler(createMSTeamsMessageHandlerDeps({ cfg, runtime }));
+
+    await handler(createContext());
+
+    expect(loginRuntimeMockState.runDeviceLoginFlow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        choice: expect.objectContaining({
+          pluginId: "openai",
+          providerId: "openai",
+          methodId: "device-code",
+        }),
+        agentId: "main",
+      }),
+    );
+    expect(authProfilesMockState.setAuthProfileOrder).toHaveBeenCalledWith({
+      agentDir: "/srv/openclaw/data/employee-agents/kkilgo/state/.openclaw/agents/main/agent",
+      provider: "openai",
+      order: ["openai:test"],
+    });
+    expect(replyDispatcherMockState.deliver).toHaveBeenCalledWith(
+      { text: "Open https://auth.openai.com/device and enter code ABCD-EFGH." },
+      expect.objectContaining({ kind: "final", stage: "final" }),
+    );
+    expect(runtime.error).not.toHaveBeenCalled();
+  });
+
   it("does not start Codex device-code login when the employee gateway rejects device pairing", async () => {
     gatewayRuntimeMockState.callGatewayFromCli.mockReset();
     gatewayRuntimeMockState.callGatewayFromCli.mockRejectedValueOnce(

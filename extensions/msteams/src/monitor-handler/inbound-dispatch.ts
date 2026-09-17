@@ -225,8 +225,18 @@ function isMissingOpenAIAuthError(err: unknown): boolean {
   return /401 Unauthorized/u.test(message) && /Missing bearer/u.test(message);
 }
 
+function isOpenAICooldownOrSubscriptionLimitError(err: unknown): boolean {
+  const message = formatUnknownError(err);
+  return (
+    /OpenAI|Codex|openai\/gpt-/iu.test(message) &&
+    /subscription usage limit|cooldown|rate[_ -]?limit|No usable subscription authentication/i.test(
+      message,
+    )
+  );
+}
+
 function isEmployeeContainerAuthEnrollmentTriggerError(err: unknown): boolean {
-  return isMissingOpenAIAuthError(err);
+  return isMissingOpenAIAuthError(err) || isOpenAICooldownOrSubscriptionLimitError(err);
 }
 
 function buildEmployeeContainerProviderLoginFlowKey(params: {
@@ -282,7 +292,11 @@ function nowMs(): number {
 
 function classifyEmployeeCommsFailure(error: unknown): MSTeamsEmployeeCommsFailureClassification {
   const text = formatUnknownError(error);
-  if (/Missing bearer|401 Unauthorized|OpenAI auth/i.test(text)) {
+  if (
+    /Missing bearer|401 Unauthorized|OpenAI auth|subscription usage limit|cooldown|rate[_ -]?limit|No usable subscription authentication/i.test(
+      text,
+    )
+  ) {
     return "model-auth-failure";
   }
   if (
