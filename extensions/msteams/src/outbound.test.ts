@@ -255,6 +255,36 @@ describe("msteamsOutbound cfg threading", () => {
     ]);
   });
 
+  it("keeps over-budget plain text intact for the Teams delivery envelope", async () => {
+    const sendText = requireSendText();
+    const onDeliveryResult = vi.fn();
+    const longText = "over-budget Teams text should use artifact fallback ".repeat(2500);
+    mocks.sendMessageMSTeams.mockImplementation(async () => {
+      return {
+        messageId: "msg-envelope",
+        conversationId: "conv-1",
+      };
+    });
+
+    const result = await sendText({
+      cfg,
+      to: "conversation:abc",
+      text: longText,
+      onDeliveryResult,
+    });
+
+    expect(mocks.sendMessageMSTeams).toHaveBeenCalledTimes(1);
+    expect(mocks.sendMessageMSTeams).toHaveBeenCalledWith({
+      cfg,
+      to: "conversation:abc",
+      text: longText,
+    });
+    expect(result).toMatchObject({
+      messageId: "msg-envelope",
+    });
+    expect(onDeliveryResult).toHaveBeenCalledTimes(1);
+  });
+
   it("passes resolved cfg and media roots for media sends", async () => {
     const cfgValue = {
       channels: {

@@ -90,12 +90,6 @@ export function createMSTeamsReplyDispatcher(params: {
    */
   const TYPING_KEEPALIVE_MAX_DURATION_MS = 10 * 60_000;
 
-  // The Teams renderer below caps individual text messages at 2,500 chars.
-  // Leave margin for continuation labels/final marker while keeping each
-  // message large enough for Teams to show its native "See more" affordance.
-  const LONG_TEXT_CONTINUATION_THRESHOLD = 2_400;
-  const LONG_TEXT_CONTINUATION_RENDERED_LIMIT = 2_400;
-
   // Forward references: sendTypingIndicator is built before the stream
   // controller exists, but the keepalive tick needs to check stream state so
   // we don't overlay "..." typing on the visible streaming card, and we want
@@ -304,73 +298,12 @@ export function createMSTeamsReplyDispatcher(params: {
     });
   };
 
-  const splitTextForTeamsContinuation = (text: string, limit: number): string[] => {
-    const chunks: string[] = [];
-    let remaining = text.trim();
-    while (remaining.length > limit) {
-      const window = remaining.slice(0, limit + 1);
-      const breakpoints = [
-        window.lastIndexOf("\n\n"),
-        window.lastIndexOf("\n"),
-        window.lastIndexOf(". "),
-        window.lastIndexOf("? "),
-        window.lastIndexOf("! "),
-        window.lastIndexOf("; "),
-        window.lastIndexOf(", "),
-        window.lastIndexOf(" "),
-      ];
-      const splitAt = Math.max(...breakpoints.filter((index) => index >= Math.floor(limit * 0.45)));
-      const boundary = splitAt > 0 ? splitAt + 1 : limit;
-      const chunk = remaining.slice(0, boundary).trim();
-      if (chunk) {
-        chunks.push(chunk);
-      }
-      remaining = remaining.slice(boundary).trim();
-    }
-    if (remaining) {
-      chunks.push(remaining);
-    }
-    return chunks;
-  };
-
   const createTeamsContinuationPayloads = (payload: ReplyPayload): ReplyPayload[] => {
-    if (
-      conversationType !== "personal" ||
-      typeof payload.text !== "string" ||
-      payload.text.length <= LONG_TEXT_CONTINUATION_THRESHOLD ||
-      payload.mediaUrl ||
-      payload.mediaUrls?.length
-    ) {
-      return [payload];
-    }
-
-    const continuationCount =
-      Math.ceil(payload.text.length / LONG_TEXT_CONTINUATION_RENDERED_LIMIT) || 1;
-    const maxLabelLength = `Response continued ${continuationCount}/${continuationCount}`.length;
-    const finalMarkerLength = "END OF FULL RESPONSE".length;
-    const bodyLimit = Math.max(
-      1_800,
-      LONG_TEXT_CONTINUATION_RENDERED_LIMIT - maxLabelLength - finalMarkerLength - 4,
-    );
-    const chunks = splitTextForTeamsContinuation(payload.text, bodyLimit);
-    return chunks.map((chunk, index): ReplyPayload => {
-      const ordinal = index + 1;
-      const final = ordinal === chunks.length;
-      return {
-        ...payload,
-        mediaUrl: undefined,
-        mediaUrls: undefined,
-        text: [
-          `Response continued ${ordinal}/${chunks.length}`,
-          "",
-          chunk,
-          "",
-          final ? "END OF FULL RESPONSE" : undefined,
-        ]
-          .filter(Boolean)
-          .join("\n"),
-      };
-    });
+    // Preserve long final payloads for the Teams delivery-budget layer.
+    // Splitting here made every piece appear under budget, bypassing the
+    // artifact/digest fallback and yielding visible "Response continued"
+    // cards that still hid content behind Teams truncation.
+    return [payload];
   };
 
   const renderContinuationPayloads = (payloads: ReplyPayload[]) => {

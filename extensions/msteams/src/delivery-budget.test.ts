@@ -58,6 +58,8 @@ describe("TeamsDeliveryBudgeter", () => {
     expect(budgeted.digestMeasurement.overBudget).toBe(false);
     expect(budgeted.activity.text).toContain("Run id: run-final-oversized");
     expect(budgeted.activity.text).toContain(`Content hash: sha256:${budgeted.artifact.hash}`);
+    expect(budgeted.activity.text).toContain("[preview truncated; see artifact for full response]");
+    expect(String(budgeted.activity.text)).not.toMatch(/\.\.\.$/u);
     expect(await readFile(budgeted.artifact.artifactPath, "utf8")).toBe(text);
   });
 
@@ -152,6 +154,8 @@ describe("TeamsDeliveryBudgeter", () => {
     expect(String(digest.text)).toContain("Run id: run-200kb-fixture");
     expect(String(digest.text)).toContain("Artifact:");
     expect(String(digest.text)).toContain("Content hash: sha256:");
+    expect(String(digest.text)).toContain("[preview truncated; see artifact for full response]");
+    expect(String(digest.text)).not.toMatch(/\.\.\.$/u);
     expect(delivered.budgeted.kind).toBe("artifact-digest");
     if (delivered.budgeted.kind !== "artifact-digest") {
       throw new Error("expected artifact digest");

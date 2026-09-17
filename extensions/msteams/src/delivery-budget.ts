@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 
 export const DEFAULT_TEAMS_ACTIVITY_BUDGET_BYTES = 80 * 1024;
-const DIGEST_SUMMARY_LIMIT = 1400;
+const DIGEST_SUMMARY_LIMIT = 1200;
+const DIGEST_TRUNCATED_MARKER = "[preview truncated; see artifact for full response]";
 
 export type TeamsDeliveryBudgetMeasurement = {
   serialized: string;
@@ -299,7 +300,7 @@ function summarizeContent(content: string): string {
     .filter(Boolean)
     .join("\n");
   return compact.length > DIGEST_SUMMARY_LIMIT
-    ? `${compact.slice(0, DIGEST_SUMMARY_LIMIT - 1).trimEnd()}...`
+    ? `${compact.slice(0, DIGEST_SUMMARY_LIMIT).trimEnd()}\n${DIGEST_TRUNCATED_MARKER}`
     : compact || "No text summary available; see artifact.";
 }
 
