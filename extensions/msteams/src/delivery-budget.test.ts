@@ -56,11 +56,48 @@ describe("TeamsDeliveryBudgeter", () => {
       throw new Error("expected artifact digest");
     }
     expect(budgeted.digestMeasurement.overBudget).toBe(false);
-    expect(budgeted.activity.text).toContain("Run id: run-final-oversized");
-    expect(budgeted.activity.text).toContain(`Content hash: sha256:${budgeted.artifact.hash}`);
-    expect(budgeted.activity.text).toContain("[preview truncated; see artifact for full response]");
+    expectVisibleDigestToHideInternals(budgeted.activity, budgeted.artifact);
+    expect(budgeted.activity.text).toContain(
+      "[Preview truncated; open the full response for complete text]",
+    );
     expect(String(budgeted.activity.text)).not.toMatch(/\.\.\.$/u);
     expect(await readFile(budgeted.artifact.artifactPath, "utf8")).toBe(text);
+  });
+
+  it("adds a desktop-openable artifact card when an artifact base URL is configured", async () => {
+    const text = "Desktop-safe artifact link response.\n".repeat(100);
+
+    const budgeted = await budgetTeamsActivity({
+      activity: { type: "message", text },
+      artifactDir,
+      artifactBaseUrl: "https://gateway.example.test/artifacts/msteams/",
+      runId: "run-open-url",
+    });
+
+    expect(budgeted.kind).toBe("artifact-digest");
+    if (budgeted.kind !== "artifact-digest") {
+      throw new Error("expected artifact digest");
+    }
+    expect(budgeted.artifact.artifactUrl).toBe(
+      `https://gateway.example.test/artifacts/msteams/${encodeURIComponent(
+        budgeted.artifact.artifactId,
+      )}`,
+    );
+    expect(String(budgeted.activity.text)).toContain(
+      "Open the full response using the button below.",
+    );
+    expectVisibleDigestToHideInternals(budgeted.activity, budgeted.artifact);
+    const attachments = budgeted.activity.attachments as Array<Record<string, unknown>>;
+    expect(attachments).toHaveLength(1);
+    const card = attachments[0]?.content as { actions?: Array<Record<string, unknown>> };
+    expect(card.actions?.[0]).toMatchObject({
+      type: "Action.OpenUrl",
+      title: "Open full response",
+      url: budgeted.artifact.artifactUrl,
+    });
+    const envelope = (budgeted.activity.channelData as Record<string, unknown>)
+      .openclawDeliveryEnvelope;
+    expect(envelope).toMatchObject({ artifactUrl: budgeted.artifact.artifactUrl });
   });
 
   it("falls desktop-unsafe long text back to an artifact digest before Teams UI truncation", async () => {
@@ -81,8 +118,11 @@ describe("TeamsDeliveryBudgeter", () => {
     if (budgeted.kind !== "artifact-digest") {
       throw new Error("expected artifact digest");
     }
-    expect(budgeted.activity.text).toContain("Run id: run-desktop-unsafe");
-    expect(budgeted.activity.text).toContain("[preview truncated; see artifact for full response]");
+    expect(budgeted.activity.text).toContain("Full response is available as an artifact");
+    expectVisibleDigestToHideInternals(budgeted.activity, budgeted.artifact);
+    expect(budgeted.activity.text).toContain(
+      "[Preview truncated; open the full response for complete text]",
+    );
     expect(String(budgeted.activity.text)).not.toContain("END OF FULL RESPONSE");
     expect(String(budgeted.activity.text).length).toBeLessThan(
       DESKTOP_SAFE_TEXT_DIGEST_THRESHOLD_CHARS,
@@ -118,7 +158,8 @@ describe("TeamsDeliveryBudgeter", () => {
     if (budgeted.kind !== "artifact-digest") {
       throw new Error("expected artifact digest");
     }
-    expect(budgeted.activity.text).toContain("Full Teams Adaptive Card payload");
+    expect(budgeted.activity.text).toContain("Full response is available as an artifact");
+    expectVisibleDigestToHideInternals(budgeted.activity, budgeted.artifact);
     expect(await readFile(budgeted.artifact.artifactPath, "utf8")).toContain("Large card row");
   });
 
@@ -147,11 +188,12 @@ describe("TeamsDeliveryBudgeter", () => {
     expect(send).toHaveBeenCalledTimes(2);
     expect(sent[0]?.text).toBe(originalText);
     expect(sent[1]?.text).not.toBe(originalText);
-    expect(String(sent[1]?.text)).toContain("Run id: run-413");
+    expect(String(sent[1]?.text)).toContain("Full response is available as an artifact");
     expect(delivered.budgeted.kind).toBe("artifact-digest");
     if (delivered.budgeted.kind !== "artifact-digest") {
       throw new Error("expected artifact digest");
     }
+    expectVisibleDigestToHideInternals(sent[1]!, delivered.budgeted.artifact);
     expect(await readFile(delivered.budgeted.artifact.artifactPath, "utf8")).toBe(originalText);
   });
 
@@ -178,10 +220,9 @@ describe("TeamsDeliveryBudgeter", () => {
     const digestMeasurement = measureTeamsActivity(digest);
     expect(digestMeasurement.overBudget).toBe(false);
     expect(String(digest.text)).toContain("Summary:");
-    expect(String(digest.text)).toContain("Run id: run-200kb-fixture");
-    expect(String(digest.text)).toContain("Artifact:");
-    expect(String(digest.text)).toContain("Content hash: sha256:");
-    expect(String(digest.text)).toContain("[preview truncated; see artifact for full response]");
+    expect(String(digest.text)).toContain(
+      "[Preview truncated; open the full response for complete text]",
+    );
     expect(String(digest.text)).not.toMatch(/\.\.\.$/u);
     expect(delivered.budgeted.kind).toBe("artifact-digest");
     if (delivered.budgeted.kind !== "artifact-digest") {
@@ -191,6 +232,54 @@ describe("TeamsDeliveryBudgeter", () => {
     const artifactHash = createHash("sha256").update(artifactText).digest("hex");
     expect(artifactText).toBe(fixture);
     expect(artifactHash).toBe(delivered.budgeted.artifact.hash);
-    expect(String(digest.text)).toContain(`sha256:${artifactHash}`);
+    expectVisibleDigestToHideInternals(digest, delivered.budgeted.artifact);
   });
 });
+
+function expectVisibleDigestToHideInternals(
+  activity: Record<string, unknown>,
+  artifact: {
+    artifactId: string;
+    artifactPath: string;
+    artifactUrl?: string;
+    hash: string;
+    runId: string;
+  },
+): void {
+  const visibleText = [
+    typeof activity.text === "string" ? activity.text : "",
+    extractVisibleAttachmentText(activity.attachments),
+  ].join("\n");
+
+  expect(visibleText).not.toContain(artifact.runId);
+  expect(visibleText).not.toContain(artifact.artifactId);
+  expect(visibleText).not.toContain(artifact.artifactPath);
+  expect(visibleText).not.toContain(artifact.hash);
+  expect(visibleText).not.toContain(`sha256:${artifact.hash}`);
+}
+
+function extractVisibleAttachmentText(attachments: unknown): string {
+  if (!Array.isArray(attachments)) {
+    return "";
+  }
+  return attachments
+    .flatMap((attachment) => {
+      if (!attachment || typeof attachment !== "object" || Array.isArray(attachment)) {
+        return [];
+      }
+      const content = (attachment as { content?: unknown }).content;
+      if (!content || typeof content !== "object" || Array.isArray(content)) {
+        return [];
+      }
+      const body = (content as { body?: unknown }).body;
+      if (!Array.isArray(body)) {
+        return [];
+      }
+      return body.map((block) =>
+        block && typeof block === "object" && !Array.isArray(block)
+          ? String((block as { text?: unknown }).text ?? "")
+          : "",
+      );
+    })
+    .join("\n");
+}

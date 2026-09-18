@@ -17,6 +17,7 @@ import type { MarkdownTableMode, MSTeamsReplyStyle, OpenClawConfig } from "../ru
 import type { MSTeamsAccessTokenProvider } from "./attachments/types.js";
 import type { MSTeamsSdkCloudOptions } from "./cloud.js";
 import type { StoredConversationReference } from "./conversation-store.js";
+import { sendTeamsDeliveryArtifactActivity } from "./delivery-artifact.js";
 import { sendTeamsActivityWithBudget } from "./delivery-budget.js";
 import { classifyMSTeamsSendError } from "./errors.js";
 import { prepareFileConsentActivity, requiresFileConsent } from "./file-consent-helpers.js";
@@ -440,7 +441,7 @@ export async function sendMSTeamsMessages(params: {
     sendFn: (activity: MSTeamsActivityLike) => Promise<unknown>,
     message: MSTeamsRenderedMessage,
     messageIndex: number,
-  ): Promise<string> => {
+  ): Promise<string[]> => {
     let activity: Record<string, unknown> | undefined;
     let pendingUploadId: string | undefined;
     let response: unknown;
@@ -471,7 +472,21 @@ export async function sendMSTeamsMessages(params: {
               return await sendFn(budgetedActivity);
             },
           });
-          return delivered.result;
+          let artifactMessageId: string | undefined;
+          if (delivered.budgeted.kind === "artifact-digest") {
+            artifactMessageId = await sendTeamsDeliveryArtifactActivity({
+              artifact: delivered.budgeted.artifact,
+              conversationId: params.conversationRef.conversation?.id ?? "unknown",
+              conversationType: params.conversationRef.conversation?.conversationType,
+              tokenProvider: params.tokenProvider,
+              sharePointSiteId: params.sharePointSiteId,
+              send: async (artifactActivity) => {
+                providerDispatchStarted = true;
+                return await sendFn(artifactActivity);
+              },
+            });
+          }
+          return { delivered: delivered.result, artifactMessageId };
         },
         {
           messageIndex,
@@ -487,14 +502,17 @@ export async function sendMSTeamsMessages(params: {
       }
       throw error;
     }
-    const messageId = extractMessageId(response) ?? "unknown";
+    const responseRecord = response as { delivered?: unknown; artifactMessageId?: string };
+    const messageId = extractMessageId(responseRecord.delivered ?? response) ?? "unknown";
 
     // Store the activity ID so the accept handler can replace the consent card in-place
     if (pendingUploadId && messageId !== "unknown") {
       setPendingUploadActivityId(pendingUploadId, messageId);
     }
 
-    return messageId;
+    return [messageId, responseRecord.artifactMessageId].filter((id): id is string =>
+      Boolean(id && id !== "unknown"),
+    );
   };
 
   const sendMessageBatchInContext = async (
@@ -504,7 +522,7 @@ export async function sendMSTeamsMessages(params: {
   ): Promise<string[]> => {
     const messageIds: string[] = [];
     for (const [idx, message] of batch.entries()) {
-      messageIds.push(await sendMessageInContext(sendFn, message, startIndex + idx));
+      messageIds.push(...(await sendMessageInContext(sendFn, message, startIndex + idx)));
     }
     return messageIds;
   };
@@ -550,7 +568,7 @@ export async function sendMSTeamsMessages(params: {
     for (const [idx, message] of messages.entries()) {
       const result = await withRevokedProxyFallback({
         run: async () => ({
-          ids: [await sendMessageInContext(sendFn, message, idx)],
+          ids: await sendMessageInContext(sendFn, message, idx),
           fellBack: false,
         }),
         onRevoked: async () => {
