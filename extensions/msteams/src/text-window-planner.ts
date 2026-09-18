@@ -86,7 +86,7 @@ export function planTeamsTextWindowChunks(
 export function shouldUseTeamsTextWindowPlan(
   activity: Record<string, unknown>,
   options: TeamsTextWindowPlannerOptions = {},
-): boolean {
+): activity is Record<string, unknown> & { text: string } {
   if (!isTextOnlyTeamsActivity(activity)) {
     return false;
   }

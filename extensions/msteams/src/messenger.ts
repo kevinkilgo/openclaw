@@ -467,9 +467,13 @@ export async function sendMSTeamsMessages(params: {
           delete activity["_pendingUploadId"];
 
           if (shouldUseTeamsTextWindowPlan(activity)) {
-            const plan = planTeamsTextWindowChunks(activity.text);
+            const text = activity.text;
+            const plan = planTeamsTextWindowChunks(text);
             const textWindowMessageIds: string[] = [];
             for (const chunk of plan.chunks) {
+              // Text-window chunks are ordinary message activities. Once any
+              // chunk is accepted, a later provider error is partial delivery
+              // and must surface as the provider error, not "not dispatched."
               const chunkActivity = {
                 ...activity,
                 text: chunk.text,
