@@ -8,6 +8,7 @@ import {
 import { resolveMarkdownTableMode } from "openclaw/plugin-sdk/markdown-table-runtime";
 import type { OutboundMediaLoadOptions } from "openclaw/plugin-sdk/outbound-media";
 import { loadOutboundMediaFromUrl, type OpenClawConfig } from "../runtime-api.js";
+import { sendTeamsDeliveryArtifactActivity } from "./delivery-artifact.js";
 import { budgetTeamsActivity, sendTeamsActivityWithBudget } from "./delivery-budget.js";
 import {
   classifyMSTeamsSendError,
@@ -431,6 +432,21 @@ async function sendProactiveActivityRaw({
         serviceUrlBoundary: ctx.sdkCloudOptions,
       }),
   });
+  if (response.budgeted.kind === "artifact-digest") {
+    await sendTeamsDeliveryArtifactActivity({
+      artifact: response.budgeted.artifact,
+      conversationId: ctx.conversationId,
+      conversationType: ctx.conversationType,
+      tokenProvider: ctx.tokenProvider,
+      sharePointSiteId: ctx.sharePointSiteId,
+      fsBackedFileConsent: true,
+      send: async (artifactActivity) =>
+        await sendMSTeamsActivityWithReference(ctx.app, baseRef, artifactActivity, {
+          ...(ctx.threadActivityId ? { threadActivityId: ctx.threadActivityId } : {}),
+          serviceUrlBoundary: ctx.sdkCloudOptions,
+        }),
+    });
+  }
   return extractMessageId(response.result) ?? "unknown";
 }
 
