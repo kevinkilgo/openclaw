@@ -464,10 +464,12 @@ export async function sendMSTeamsMessages(params: {
               : undefined;
           delete activity["_pendingUploadId"];
 
-          providerDispatchStarted = true;
           const delivered = await sendTeamsActivityWithBudget({
             activity,
-            send: sendFn,
+            send: async (budgetedActivity) => {
+              providerDispatchStarted = true;
+              return await sendFn(budgetedActivity);
+            },
           });
           return delivered.result;
         },

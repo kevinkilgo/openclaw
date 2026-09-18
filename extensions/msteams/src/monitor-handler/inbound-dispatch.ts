@@ -66,7 +66,10 @@ const EMPLOYEE_CONTAINER_PROGRESS_ACK_TEXT =
   "I'm working on that now. Larger reports or connector-heavy requests can take a few minutes; I'll send the full result here when it's ready.";
 const EMPLOYEE_CONTAINER_FAILURE_UPDATE_TEXT =
   "I hit an issue before I could finish that request. I've logged it and we're working on the fix; I'll notify you when it's ready to retry.";
+const EMPLOYEE_CONTAINER_MODEL_UNAVAILABLE_TEXT =
+  "The kkilgo test lane is temporarily unavailable because its model profile is in cooldown. I won't keep retrying this request in Teams; we'll retry after the lane is healthy.";
 const activeEmployeeContainerProviderLoginFlows = createProviderLoginFlowRegistry();
+const deliveredEmployeeContainerStatusUpdates = new Set<string>();
 function employeeContainerGatewayClientOptions() {
   return {
     clientName: "gateway-client" as const,
@@ -225,6 +228,16 @@ function isMissingOpenAIAuthError(err: unknown): boolean {
   return /401 Unauthorized/u.test(message) && /Missing bearer/u.test(message);
 }
 
+function isOpenAICooldownOrSubscriptionLimitError(err: unknown): boolean {
+  const message = formatUnknownError(err);
+  return (
+    /OpenAI|Codex|openai\/gpt-/iu.test(message) &&
+    /subscription usage limit|cooldown|rate[_ -]?limit|No usable subscription authentication/i.test(
+      message,
+    )
+  );
+}
+
 function isEmployeeContainerAuthEnrollmentTriggerError(err: unknown): boolean {
   return isMissingOpenAIAuthError(err);
 }
@@ -282,7 +295,11 @@ function nowMs(): number {
 
 function classifyEmployeeCommsFailure(error: unknown): MSTeamsEmployeeCommsFailureClassification {
   const text = formatUnknownError(error);
-  if (/Missing bearer|401 Unauthorized|OpenAI auth/i.test(text)) {
+  if (
+    /Missing bearer|401 Unauthorized|OpenAI auth|subscription usage limit|cooldown|rate[_ -]?limit|No usable subscription authentication/i.test(
+      text,
+    )
+  ) {
     return "model-auth-failure";
   }
   if (
@@ -323,8 +340,19 @@ async function deliverEmployeeContainerStatusUpdate(params: {
   text: string;
   routeAgentId: string;
   stage: "accepted" | "failed";
+  dedupeKey?: string;
   log: MSTeamsMessageHandlerDeps["log"];
 }): Promise<boolean> {
+  const statusKey = params.dedupeKey
+    ? `${params.stage}:${params.text}:${params.dedupeKey}`
+    : undefined;
+  if (statusKey && deliveredEmployeeContainerStatusUpdates.has(statusKey)) {
+    params.log.info("msteams employee container status update suppressed as duplicate", {
+      routeAgentId: params.routeAgentId,
+      stage: params.stage,
+    });
+    return true;
+  }
   try {
     const delivered = await params.delivery.deliver({ text: params.text }, {
       kind: "progress",
@@ -332,6 +360,9 @@ async function deliverEmployeeContainerStatusUpdate(params: {
     } as never);
     await params.settleDelivery?.();
     await delivered?.finalization;
+    if (statusKey) {
+      deliveredEmployeeContainerStatusUpdates.add(statusKey);
+    }
     params.log.info("msteams employee container status update delivered", {
       routeAgentId: params.routeAgentId,
       stage: params.stage,
@@ -600,6 +631,7 @@ async function dispatchViaEmployeeContainer(params: {
           text: EMPLOYEE_CONTAINER_PROGRESS_ACK_TEXT,
           routeAgentId: params.routeAgentId,
           stage: "accepted",
+          dedupeKey: idempotencyKey,
           log: params.log,
         });
       }
@@ -1031,6 +1063,32 @@ export async function dispatchMSTeamsInboundTurn(params: {
           return result;
         }
       }
+      if (isOpenAICooldownOrSubscriptionLimitError(err)) {
+        log.error("msteams employee container model unavailable", {
+          routeAgentId: route.agentId,
+          employeeSessionKey: resolveEmployeeContainerSessionKey(route.agentId, route.sessionKey),
+          error: formatUnknownError(err),
+        });
+        await deliverEmployeeContainerStatusUpdate({
+          delivery,
+          settleDelivery: dispatcherOptions.onSettled,
+          text: EMPLOYEE_CONTAINER_MODEL_UNAVAILABLE_TEXT,
+          routeAgentId: route.agentId,
+          stage: "failed",
+          dedupeKey: `msteams-employee-container:${route.agentId}:${
+            activity.id ?? route.sessionKey
+          }`,
+          log,
+        });
+        runtime.error(
+          formatEmployeeContainerDispatchError({
+            routeAgentId: route.agentId,
+            routeSessionKey: route.sessionKey,
+            err,
+          }),
+        );
+        return { kind: "failed" };
+      }
       log.error("msteams employee container dispatch failed", {
         routeAgentId: route.agentId,
         employeeSessionKey: resolveEmployeeContainerSessionKey(route.agentId, route.sessionKey),
@@ -1042,6 +1100,7 @@ export async function dispatchMSTeamsInboundTurn(params: {
         text: EMPLOYEE_CONTAINER_FAILURE_UPDATE_TEXT,
         routeAgentId: route.agentId,
         stage: "failed",
+        dedupeKey: `msteams-employee-container:${route.agentId}:${activity.id ?? route.sessionKey}`,
         log,
       });
       runtime.error(
