@@ -36,6 +36,7 @@ import { getMSTeamsRuntime } from "./runtime.js";
 import { sendMSTeamsActivityWithReference } from "./sdk-proactive.js";
 import type { MSTeamsActivityLike } from "./sdk-types.js";
 import type { MSTeamsApp } from "./sdk.js";
+import { planTeamsTextWindowChunks, shouldUseTeamsTextWindowPlan } from "./text-window-planner.js";
 
 /**
  * MSTeams-specific media size limit (100MB).
@@ -465,6 +466,26 @@ export async function sendMSTeamsMessages(params: {
               : undefined;
           delete activity["_pendingUploadId"];
 
+          if (shouldUseTeamsTextWindowPlan(activity)) {
+            const plan = planTeamsTextWindowChunks(activity.text);
+            const textWindowMessageIds: string[] = [];
+            for (const chunk of plan.chunks) {
+              const chunkActivity = {
+                ...activity,
+                text: chunk.text,
+              };
+              const delivered = await sendTeamsActivityWithBudget({
+                activity: chunkActivity,
+                send: async (budgetedActivity) => {
+                  providerDispatchStarted = true;
+                  return await sendFn(budgetedActivity);
+                },
+              });
+              textWindowMessageIds.push(extractMessageId(delivered.result) ?? "unknown");
+            }
+            return { delivered: undefined, textWindowMessageIds };
+          }
+
           const delivered = await sendTeamsActivityWithBudget({
             activity,
             send: async (budgetedActivity) => {
@@ -502,17 +523,25 @@ export async function sendMSTeamsMessages(params: {
       }
       throw error;
     }
-    const responseRecord = response as { delivered?: unknown; artifactMessageId?: string };
-    const messageId = extractMessageId(responseRecord.delivered ?? response) ?? "unknown";
+    const responseRecord = response as {
+      delivered?: unknown;
+      artifactMessageId?: string;
+      textWindowMessageIds?: string[];
+    };
+    const messageId =
+      responseRecord.textWindowMessageIds?.[0] ??
+      extractMessageId(responseRecord.delivered ?? response) ??
+      "unknown";
 
     // Store the activity ID so the accept handler can replace the consent card in-place
     if (pendingUploadId && messageId !== "unknown") {
       setPendingUploadActivityId(pendingUploadId, messageId);
     }
 
-    return [messageId, responseRecord.artifactMessageId].filter((id): id is string =>
-      Boolean(id && id !== "unknown"),
-    );
+    return [
+      ...(responseRecord.textWindowMessageIds ?? [messageId]),
+      responseRecord.artifactMessageId,
+    ].filter((id): id is string => Boolean(id && id !== "unknown"));
   };
 
   const sendMessageBatchInContext = async (

@@ -260,7 +260,7 @@ describe("msteamsOutbound cfg threading", () => {
     const sendText = requireSendText();
     const onDeliveryResult = vi.fn();
     const longText = "over-budget Teams text should stay in text-window chunks. ".repeat(2500);
-    mocks.sendMessageMSTeams.mockImplementation(async (_call, index?: never) => {
+    mocks.sendMessageMSTeams.mockImplementation(async () => {
       const messageIndex = mocks.sendMessageMSTeams.mock.calls.length;
       return {
         messageId: `msg-text-window-${messageIndex}`,

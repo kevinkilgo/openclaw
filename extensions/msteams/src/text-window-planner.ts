@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { measureTeamsActivity, type TeamsDeliveryBudgetMeasurement } from "./delivery-budget.js";
 import { buildMSTeamsMessageActivity } from "./message-activity.js";
 
@@ -91,7 +90,7 @@ export function shouldUseTeamsTextWindowPlan(
   if (!isTextOnlyTeamsActivity(activity)) {
     return false;
   }
-  const text = String(activity.text ?? "");
+  const text = activity.text;
   if (!text.trim()) {
     return false;
   }
@@ -217,7 +216,7 @@ function normalizePositiveInteger(
   if (typeof explicit === "number" && Number.isFinite(explicit) && explicit > 0) {
     return Math.floor(explicit);
   }
-  const parsed = envValue?.trim() ? Number(envValue) : NaN;
+  const parsed = envValue?.trim() ? Number(envValue) : Number.NaN;
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
 }
 
