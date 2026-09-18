@@ -21,6 +21,21 @@ afterEach(async () => {
   await rm(artifactDir, { force: true, recursive: true });
 });
 
+function expectVisibleDigestTextClean(
+  text: unknown,
+  artifact: { artifactId: string; artifactPath: string; hash: string; runId: string },
+): void {
+  const visibleText = String(text);
+  expect(visibleText).not.toContain("Run id:");
+  expect(visibleText).not.toContain("Artifact:");
+  expect(visibleText).not.toContain("Artifact id:");
+  expect(visibleText).not.toContain("Content hash:");
+  expect(visibleText).not.toContain(artifact.runId);
+  expect(visibleText).not.toContain(artifact.artifactId);
+  expect(visibleText).not.toContain(artifact.artifactPath);
+  expect(visibleText).not.toContain(artifact.hash);
+}
+
 describe("TeamsDeliveryBudgeter", () => {
   it("accounts for UTF-16 JSON payload size as well as UTF-8 bytes", () => {
     const measured = measureTeamsActivity({ type: "message", text: "ASCII \u{1f680}" }, 1);
@@ -56,11 +71,15 @@ describe("TeamsDeliveryBudgeter", () => {
       throw new Error("expected artifact digest");
     }
     expect(budgeted.digestMeasurement.overBudget).toBe(false);
-    expect(budgeted.activity.text).toContain("Run id: run-final-oversized");
-    expect(budgeted.activity.text).toContain(`Content hash: sha256:${budgeted.artifact.hash}`);
+    expect(budgeted.activity.text).toContain("The full response was too long to show in Teams");
     expect(budgeted.activity.text).toContain("[preview truncated; see artifact for full response]");
+    expectVisibleDigestTextClean(budgeted.activity.text, budgeted.artifact);
     expect(String(budgeted.activity.text)).not.toMatch(/\.\.\.$/u);
     expect(await readFile(budgeted.artifact.artifactPath, "utf8")).toBe(text);
+    expect(
+      (budgeted.activity.channelData as { openclawDeliveryEnvelope?: { hash?: string } })
+        .openclawDeliveryEnvelope?.hash,
+    ).toBe(`sha256:${budgeted.artifact.hash}`);
   });
 
   it("falls desktop-unsafe long text back to an artifact digest before Teams UI truncation", async () => {
@@ -81,12 +100,11 @@ describe("TeamsDeliveryBudgeter", () => {
     if (budgeted.kind !== "artifact-digest") {
       throw new Error("expected artifact digest");
     }
-    expect(budgeted.activity.text).toContain("Run id: run-desktop-unsafe");
+    expect(budgeted.activity.text).toContain("The full response was too long to show in Teams");
     expect(budgeted.activity.text).toContain("[preview truncated; see artifact for full response]");
+    expectVisibleDigestTextClean(budgeted.activity.text, budgeted.artifact);
     expect(String(budgeted.activity.text)).not.toContain("END OF FULL RESPONSE");
-    expect(String(budgeted.activity.text).length).toBeLessThan(
-      DESKTOP_SAFE_TEXT_DIGEST_THRESHOLD_CHARS,
-    );
+    expect(String(budgeted.activity.text).length).toBeLessThan(DESKTOP_SAFE_TEXT_DIGEST_THRESHOLD_CHARS);
     expect(await readFile(budgeted.artifact.artifactPath, "utf8")).toBe(text);
   });
 
@@ -147,11 +165,12 @@ describe("TeamsDeliveryBudgeter", () => {
     expect(send).toHaveBeenCalledTimes(2);
     expect(sent[0]?.text).toBe(originalText);
     expect(sent[1]?.text).not.toBe(originalText);
-    expect(String(sent[1]?.text)).toContain("Run id: run-413");
     expect(delivered.budgeted.kind).toBe("artifact-digest");
     if (delivered.budgeted.kind !== "artifact-digest") {
       throw new Error("expected artifact digest");
     }
+    expect(String(sent[1]?.text)).toContain("The full response was too long to show in Teams");
+    expectVisibleDigestTextClean(sent[1]?.text, delivered.budgeted.artifact);
     expect(await readFile(delivered.budgeted.artifact.artifactPath, "utf8")).toBe(originalText);
   });
 
@@ -177,20 +196,22 @@ describe("TeamsDeliveryBudgeter", () => {
     const digest = sent[0]!;
     const digestMeasurement = measureTeamsActivity(digest);
     expect(digestMeasurement.overBudget).toBe(false);
-    expect(String(digest.text)).toContain("Summary:");
-    expect(String(digest.text)).toContain("Run id: run-200kb-fixture");
-    expect(String(digest.text)).toContain("Artifact:");
-    expect(String(digest.text)).toContain("Content hash: sha256:");
+    expect(String(digest.text)).toContain("The full response was too long to show in Teams");
+    expect(String(digest.text)).toContain("Here is a short preview:");
     expect(String(digest.text)).toContain("[preview truncated; see artifact for full response]");
     expect(String(digest.text)).not.toMatch(/\.\.\.$/u);
     expect(delivered.budgeted.kind).toBe("artifact-digest");
     if (delivered.budgeted.kind !== "artifact-digest") {
       throw new Error("expected artifact digest");
     }
+    expectVisibleDigestTextClean(digest.text, delivered.budgeted.artifact);
     const artifactText = await readFile(delivered.budgeted.artifact.artifactPath, "utf8");
     const artifactHash = createHash("sha256").update(artifactText).digest("hex");
     expect(artifactText).toBe(fixture);
     expect(artifactHash).toBe(delivered.budgeted.artifact.hash);
-    expect(String(digest.text)).toContain(`sha256:${artifactHash}`);
+    expect(
+      (digest.channelData as { openclawDeliveryEnvelope?: { hash?: string } })
+        .openclawDeliveryEnvelope?.hash,
+    ).toBe(`sha256:${artifactHash}`);
   });
 });

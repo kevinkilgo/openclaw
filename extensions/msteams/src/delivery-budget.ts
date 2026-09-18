@@ -197,7 +197,10 @@ async function buildArtifactDigestActivity(params: {
   const runId =
     params.runId?.trim() || extractRunId(params.activity) || `msteams-run-${hash.slice(0, 12)}`;
   const artifactId = `${runId}-${hash.slice(0, 16)}.md`;
-  const artifactDir = params.artifactDir ?? join(process.cwd(), ".artifacts", "msteams-responses");
+  const artifactDir =
+    params.artifactDir ??
+    process.env.OPENCLAW_MSTEAMS_ARTIFACT_DIR ??
+    join(process.cwd(), ".artifacts", "msteams-responses");
   await mkdir(artifactDir, { recursive: true });
   const artifactPath = join(artifactDir, artifactId);
   await writeFile(artifactPath, content, "utf8");
@@ -227,15 +230,11 @@ function buildDigestActivity(params: {
   const base = {
     type: "message",
     text: [
-      "Full response stored as an artifact because the Teams payload exceeded the delivery budget.",
+      "The full response was too long to show in Teams, so OpenClaw saved it separately.",
+      "Here is a short preview:",
       "",
-      `Run id: ${params.artifact.runId}`,
-      `Artifact: ${params.artifact.artifactPath}`,
-      `Artifact id: ${params.artifact.artifactId}`,
-      `Content hash: sha256:${params.artifact.hash}`,
       `Description: ${params.artifact.description}`,
       "",
-      "Summary:",
       summary,
     ].join("\n"),
     channelData: {
@@ -255,11 +254,8 @@ function buildDigestActivity(params: {
   return {
     ...base,
     text: [
-      "Full response stored as an artifact because the Teams payload exceeded the delivery budget.",
-      `Run id: ${params.artifact.runId}`,
-      `Artifact: ${params.artifact.artifactPath}`,
-      `Content hash: sha256:${params.artifact.hash}`,
-      "Summary: response omitted from Teams due to size; see artifact.",
+      "The full response was too long to show in Teams, so OpenClaw saved it separately.",
+      "Response preview omitted because it was still too large for Teams.",
     ].join("\n"),
   };
 }
@@ -280,9 +276,7 @@ function isDesktopUnsafeLongText(activity: Record<string, unknown>): boolean {
     return false;
   }
   const attachments = Array.isArray(activity.attachments) ? activity.attachments : [];
-  return (
-    attachments.length === 0 && activity.text.length > DESKTOP_SAFE_TEXT_DIGEST_THRESHOLD_CHARS
-  );
+  return attachments.length === 0 && activity.text.length > DESKTOP_SAFE_TEXT_DIGEST_THRESHOLD_CHARS;
 }
 
 function describeActivity(activity: Record<string, unknown>): string {
