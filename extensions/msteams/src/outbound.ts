@@ -18,11 +18,10 @@ import {
   normalizeStringEntries,
   type ChannelOutboundAdapter,
 } from "../runtime-api.js";
-import { measureTeamsActivity } from "./delivery-budget.js";
-import { buildMSTeamsMessageActivity } from "./message-activity.js";
 import { createMSTeamsPollStoreState } from "./polls.js";
 import { buildMSTeamsPresentationCard, MSTEAMS_PRESENTATION_CAPABILITIES } from "./presentation.js";
 import { sendAdaptiveCardMSTeams, sendMessageMSTeams, sendPollMSTeams } from "./send.js";
+import { planTeamsTextWindowChunks, shouldUseTeamsTextWindowPlan } from "./text-window-planner.js";
 
 const MSTEAMS_TEXT_CHUNK_LIMIT = 2500;
 
@@ -48,6 +47,10 @@ type MSTeamsMediaSendFn = (
 function toMSTeamsOutboundResult(result: MSTeamsSendResult) {
   const { conversationId, ...delivery } = result;
   return { ...delivery, target: { kind: "conversation" as const, id: conversationId } };
+}
+
+function attachMSTeamsOutboundResult(result: MSTeamsSendResult) {
+  return attachChannelToResult("msteams", toMSTeamsOutboundResult(result));
 }
 
 function resolveMSTeamsThreadTarget(to: string, threadId?: string | number | null) {
@@ -84,10 +87,6 @@ function resolveMSTeamsMediaSend(params: {
     resolveOutboundSendDep<MSTeamsMediaSendFn>(params.deps, "msteams") ??
     ((to, text, opts) => sendMessageMSTeams({ cfg: params.cfg, to, text, ...opts }))
   );
-}
-
-function shouldUseEnvelopeForText(text: string): boolean {
-  return measureTeamsActivity(buildMSTeamsMessageActivity(text)).overBudget;
 }
 
 export const msteamsOutbound: ChannelOutboundAdapter = {
@@ -185,24 +184,18 @@ export const msteamsOutbound: ChannelOutboundAdapter = {
     }
     if (text.trim()) {
       const send = resolveMSTeamsTextSend({ cfg, deps });
-      if (shouldUseEnvelopeForText(text)) {
-        const result = await send(deliveryTarget, text);
-        await onDeliveryResult?.(attachChannelToResult("msteams", toMSTeamsOutboundResult(result)));
-        return attachChannelToResult("msteams", toMSTeamsOutboundResult(result));
-      }
-      const chunks = resolveTextChunksWithFallback(
-        text,
-        chunkTextForOutbound(
-          text,
-          resolveMSTeamsEffectiveTextChunkLimit(cfg.channels?.msteams?.textChunkLimit),
+      return attachChannelToResult(
+        "msteams",
+        toMSTeamsOutboundResult(
+          await sendTeamsTextWindowFirst({
+            cfg,
+            deliveryTarget,
+            text,
+            send,
+            onDeliveryResult,
+          }),
         ),
       );
-      let result: Awaited<ReturnType<MSTeamsTextSendFn>>;
-      for (const chunk of chunks) {
-        result = await send(deliveryTarget, chunk);
-        await onDeliveryResult?.(attachChannelToResult("msteams", toMSTeamsOutboundResult(result)));
-      }
-      return attachChannelToResult("msteams", toMSTeamsOutboundResult(result!));
     }
     throw new Error("MS Teams payload send requires text, media, or a presentation card.");
   },
@@ -211,24 +204,15 @@ export const msteamsOutbound: ChannelOutboundAdapter = {
     sendText: async ({ cfg, to, text, deps, threadId, onDeliveryResult }) => {
       const send = resolveMSTeamsTextSend({ cfg, deps });
       const deliveryTarget = resolveMSTeamsThreadTarget(to, threadId);
-      if (shouldUseEnvelopeForText(text)) {
-        const result = await send(deliveryTarget, text);
-        await onDeliveryResult?.(attachChannelToResult("msteams", toMSTeamsOutboundResult(result)));
-        return toMSTeamsOutboundResult(result);
-      }
-      const chunks = resolveTextChunksWithFallback(
-        text,
-        chunkTextForOutbound(
+      return toMSTeamsOutboundResult(
+        await sendTeamsTextWindowFirst({
+          cfg,
+          deliveryTarget,
           text,
-          resolveMSTeamsEffectiveTextChunkLimit(cfg.channels?.msteams?.textChunkLimit),
-        ),
+          send,
+          onDeliveryResult,
+        }),
       );
-      let result: Awaited<ReturnType<MSTeamsTextSendFn>>;
-      for (const chunk of chunks) {
-        result = await send(deliveryTarget, chunk);
-        await onDeliveryResult?.(attachChannelToResult("msteams", toMSTeamsOutboundResult(result)));
-      }
-      return toMSTeamsOutboundResult(result!);
     },
     sendMedia: async ({
       cfg,
@@ -275,3 +259,32 @@ export const msteamsOutbound: ChannelOutboundAdapter = {
     },
   }),
 };
+
+async function sendTeamsTextWindowFirst(params: {
+  cfg: MSTeamsSendConfig;
+  deliveryTarget: string;
+  text: string;
+  send: MSTeamsTextSendFn;
+  onDeliveryResult?: (
+    result: ReturnType<typeof attachMSTeamsOutboundResult>,
+  ) => Promise<void> | void;
+}): Promise<MSTeamsSendResult> {
+  const chunks = shouldUseTeamsTextWindowPlan({ type: "message", text: params.text })
+    ? planTeamsTextWindowChunks(params.text).chunks.map((chunk) => chunk.text)
+    : resolveTextChunksWithFallback(
+        params.text,
+        chunkTextForOutbound(
+          params.text,
+          resolveMSTeamsEffectiveTextChunkLimit(params.cfg.channels?.msteams?.textChunkLimit),
+        ),
+      );
+  let result: Awaited<ReturnType<MSTeamsTextSendFn>> | undefined;
+  for (const chunk of chunks) {
+    result = await params.send(params.deliveryTarget, chunk);
+    await params.onDeliveryResult?.(attachMSTeamsOutboundResult(result));
+  }
+  if (!result) {
+    throw new Error("MS Teams text delivery produced no chunks.");
+  }
+  return result;
+}
