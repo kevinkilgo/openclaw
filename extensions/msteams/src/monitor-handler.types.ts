@@ -2,6 +2,7 @@
 import type { OpenClawConfig, RuntimeEnv } from "../runtime-api.js";
 import type { MSTeamsConversationStore } from "./conversation-store.js";
 import type { MSTeamsEmployeeOnboardingRequestStore } from "./employee-onboarding.js";
+import type { MSTeamsHardRulesDeliveryEvidence } from "./hard-rules-evidence.js";
 import type { MSTeamsMonitorLogger } from "./monitor-types.js";
 import type { MSTeamsPollStore } from "./polls.js";
 import type { MSTeamsApp } from "./sdk.js";
@@ -19,5 +20,6 @@ export type MSTeamsMessageHandlerDeps = {
   conversationStore: MSTeamsConversationStore;
   pollStore: MSTeamsPollStore;
   employeeOnboardingStore?: MSTeamsEmployeeOnboardingRequestStore;
+  onHardRulesDeliveryEvidence?: (evidence: MSTeamsHardRulesDeliveryEvidence) => void;
   log: MSTeamsMonitorLogger;
 };

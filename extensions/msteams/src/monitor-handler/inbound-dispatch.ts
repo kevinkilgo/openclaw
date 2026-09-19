@@ -998,6 +998,7 @@ export async function dispatchMSTeamsInboundTurn(params: {
         recordMSTeamsSentMessage(conversationId, id);
       }
     },
+    onHardRulesDeliveryEvidence: params.onHardRulesDeliveryEvidence,
     tokenProvider,
     sharePointSiteId: cfg.channels?.msteams?.sharePointSiteId,
   });

@@ -26,6 +26,7 @@ const fsMockState = vi.hoisted(() => ({
 }));
 
 const replyDispatcherMockState = vi.hoisted(() => ({
+  create: vi.fn(),
   deliver: vi.fn(),
   settle: vi.fn(),
 }));
@@ -51,15 +52,18 @@ vi.mock("openclaw/plugin-sdk/provider-auth", async (importOriginal) => ({
 }));
 
 vi.mock("./reply-dispatcher.js", () => ({
-  createMSTeamsReplyDispatcher: () => ({
-    dispatcherOptions: {
-      onSettled: replyDispatcherMockState.settle,
-    },
-    delivery: {
-      deliver: replyDispatcherMockState.deliver,
-    },
-    replyOptions: {},
-  }),
+  createMSTeamsReplyDispatcher: (params: unknown) => {
+    replyDispatcherMockState.create(params);
+    return {
+      dispatcherOptions: {
+        onSettled: replyDispatcherMockState.settle,
+      },
+      delivery: {
+        deliver: replyDispatcherMockState.deliver,
+      },
+      replyOptions: {},
+    };
+  },
 }));
 
 function createContext(): MSTeamsTurnContext {
@@ -154,6 +158,7 @@ describe("msteams employee container dispatch", () => {
       finalization: Promise.resolve(),
     });
     replyDispatcherMockState.settle.mockResolvedValue(undefined);
+    replyDispatcherMockState.create.mockClear();
     installMSTeamsTestRuntime({
       resolveAgentRoute: () => ({
         agentId: "kkilgo",
@@ -208,6 +213,26 @@ describe("msteams employee container dispatch", () => {
       expect.objectContaining({ kind: "final", stage: "final" }),
     );
     expect(replyDispatcherMockState.settle).toHaveBeenCalledTimes(1);
+  });
+
+  it("wires hard-rules evidence capture into the ordinary employee Teams route", async () => {
+    const cfg = createConfig();
+    const runtime = { error: vi.fn() } as unknown as RuntimeEnv;
+    const onHardRulesDeliveryEvidence = vi.fn();
+    const deps = {
+      ...createMSTeamsMessageHandlerDeps({ cfg, runtime }),
+      onHardRulesDeliveryEvidence,
+    };
+    const handler = createMSTeamsMessageHandler(deps);
+
+    await handler(createContext());
+
+    expect(replyDispatcherMockState.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: "kkilgo",
+        onHardRulesDeliveryEvidence,
+      }),
+    );
   });
 
   it("acknowledges accepted long-running employee turns before the final reply", async () => {
