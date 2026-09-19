@@ -4,6 +4,7 @@ import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { createReplyDispatcher } from "openclaw/plugin-sdk/reply-runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReplyPayload } from "../runtime-api.js";
+import type { MSTeamsHardRulesDeliveryEvidence } from "./hard-rules-evidence.js";
 
 const createChannelMessageReplyPipelineMock = vi.hoisted(() => vi.fn());
 const getMSTeamsRuntimeMock = vi.hoisted(() => vi.fn());
@@ -147,7 +148,10 @@ describe("createMSTeamsReplyDispatcher", () => {
   function createDispatcher(
     conversationType = "personal",
     msteamsConfig: Record<string, unknown> = {},
-    extraParams: { onSentMessageIds?: (ids: string[]) => void } = {},
+    extraParams: {
+      onSentMessageIds?: (ids: string[]) => void;
+      onHardRulesDeliveryEvidence?: (evidence: MSTeamsHardRulesDeliveryEvidence) => void;
+    } = {},
   ) {
     const contextSendActivity = vi.fn(async () => ({ id: "activity-1" }));
     lastContextSendActivity = contextSendActivity;
@@ -1197,6 +1201,60 @@ describe("createMSTeamsReplyDispatcher", () => {
     );
     expect(emittedTexts.join("\n")).not.toContain("Response continued");
     expect(emittedTexts.join("\n")).not.toContain("END OF FULL RESPONSE");
+  });
+
+  it("records hard-rules delivery evidence for ordinary long block replies", async () => {
+    registerHooks("message_sending");
+    renderReplyPayloadsToMessagesMock.mockImplementation((payloads) =>
+      payloads.flatMap((payload) =>
+        typeof payload.text === "string" && payload.text ? [{ text: payload.text }] : [],
+      ),
+    );
+    const deliveredIds = Array.from({ length: 4 }, (_, index) => `chunk-id-${index + 1}`);
+    sendMSTeamsMessagesMock.mockResolvedValue(deliveredIds as never);
+    const onHardRulesDeliveryEvidence = vi.fn();
+    const dispatcher = createDispatcher(
+      "groupchat",
+      { streaming: { block: { enabled: false } } },
+      { onHardRulesDeliveryEvidence },
+    );
+    const longReply = "Controlled ordinary employee route native text evidence. ".repeat(70);
+
+    const result = await dispatcher.delivery.deliver({ text: longReply }, { kind: "final" });
+    await dispatcher.dispatcherOptions.onSettled?.();
+
+    await expect(result?.finalization).resolves.toEqual({
+      visibleReplySent: true,
+      messageIds: deliveredIds,
+      content: longReply,
+    });
+    expect(onHardRulesDeliveryEvidence).toHaveBeenCalledTimes(1);
+    expect(onHardRulesDeliveryEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "msteams-hard-rules-delivery-evidence",
+        route: "ordinary-employee",
+        conversationId: "conv",
+        conversationType: "groupchat",
+        messageIds: deliveredIds,
+        chunkCount: deliveredIds.length,
+        hashesMatch: true,
+        nativeTextChunksOnly: true,
+        defaultArtifactRouteObserved: false,
+        deliverySuccess: true,
+      }),
+    );
+    const evidence = onHardRulesDeliveryEvidence.mock
+      .calls[0]?.[0] as MSTeamsHardRulesDeliveryEvidence;
+    expect(evidence.chunks).toHaveLength(deliveredIds.length);
+    expect(evidence.chunks.map((chunk) => chunk.index)).toEqual([1, 2, 3, 4]);
+    expect(evidence.chunks.map((chunk) => chunk.messageId)).toEqual(deliveredIds);
+    expect(evidence.chunks.every((chunk) => chunk.budgetBytes <= 80 * 1024)).toBe(true);
+    expect(evidence.chunks.every((chunk) => chunk.jsonUtf8Bytes < 80 * 1024)).toBe(true);
+    expect(evidence.chunks.every((chunk) => chunk.jsonUtf16Bytes < 80 * 1024)).toBe(true);
+    expect(evidence.chunks.every((chunk) => !chunk.overBudget)).toBe(true);
+    expect(sendMSTeamsMessagesMock).toHaveBeenCalledWith(
+      expect.objectContaining({ messages: [{ text: longReply }] }),
+    );
   });
 
   it("routes long post-native progress remainders through Teams message delivery", async () => {
