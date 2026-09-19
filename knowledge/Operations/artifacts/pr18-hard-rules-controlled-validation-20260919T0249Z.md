@@ -130,6 +130,58 @@ Next action:
 - Rerun the controlled `kkilgo@ftsc.com` ordinary employee-route validation after the live route includes the patch.
 - Capture the generated `msteams-hard-rules-delivery-*.json` plus Teams desktop and authenticated web no-truncation/no-silent-ellipsis proof.
 
+## 2026-09-19T08:35Z Local Commit / Publication Attempt
+
+STATUS: LOCAL COMMIT READY / PUBLICATION BLOCKED BY GITHUB HTTPS AUTH / ACCEPTANCE STILL HOLD.
+
+Local commit:
+
+```text
+dc80f6c04cd3c4c34c459594f6b4cbf90510ba11 Classify empty Teams employee replies
+```
+
+Committed files:
+
+- `extensions/msteams/src/monitor-handler/inbound-dispatch.ts`
+- `extensions/msteams/src/employee-container-dispatch.test.ts`
+- `knowledge/Operations/artifacts/pr18-hard-rules-controlled-validation-20260919T0249Z.md`
+
+Focused validation rerun before commit:
+
+```text
+pnpm exec vitest run extensions/msteams/src/employee-container-dispatch.test.ts
+```
+
+Result:
+
+```text
+Test Files  1 passed (1)
+Tests  13 passed (13)
+```
+
+Publication attempt:
+
+```text
+git push origin pr-18
+```
+
+Result:
+
+```text
+fatal: could not read Username for 'https://github.com': No such device or address
+```
+
+Remediation:
+
+- Fiona/Kevin should publish or cherry-pick local commit `dc80f6c04cd3c4c34c459594f6b4cbf90510ba11` from `/home/oc_admin/.openclaw/workspace/source/openclaw-pr18-text-window-first`, or restore non-interactive GitHub push auth for Justin.
+- After pickup, rerun the controlled `kkilgo@ftsc.com` ordinary employee-route validation. A run that completes without `terminalReply.text` should now fail visibly as `recipient-visible-proof-missing` instead of quiet-completing with no reply and no hard-rules delivery JSON.
+
+Acceptance status remains HOLD / NOT READY:
+
+- No controlled live delivery JSON exists yet.
+- No Teams desktop or authenticated web rendering proof exists yet.
+- This commit improves runtime pickup diagnosability; it is not acceptance proof by itself.
+
 ## 2026-09-19T07:00Z Live Invocation Surface
 
 STATUS: BLOCKED / NOT READY.
