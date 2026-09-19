@@ -299,6 +299,43 @@ describe("msteams employee container dispatch", () => {
     );
   });
 
+  it("fails employee container runs that complete without a terminal reply", async () => {
+    gatewayRuntimeMockState.callGatewayFromCli.mockReset();
+    gatewayRuntimeMockState.callGatewayFromCli
+      .mockResolvedValueOnce({ runId: "run-empty-terminal-reply" })
+      .mockResolvedValueOnce({ status: "ok" });
+    const cfg = createDefaultWaitConfig();
+    const runtime = { error: vi.fn() } as unknown as RuntimeEnv;
+    const deps = createMSTeamsMessageHandlerDeps({ cfg, runtime });
+    const handler = createMSTeamsMessageHandler(deps);
+    const context = createContext();
+    context.activity.id = "teams-message-empty-terminal-reply";
+
+    await expect(handler(context)).rejects.toThrow(
+      "employee container agent run completed without a terminal reply",
+    );
+
+    expect(deps.log.info).toHaveBeenCalledWith(
+      "msteams employee comms e2e trace",
+      expect.objectContaining({
+        routeAgentId: "kkilgo",
+        employeeRunId: "run-empty-terminal-reply",
+        finalStatus: "failed",
+        failureClassification: "recipient-visible-proof-missing",
+      }),
+    );
+    expect(runtime.error).toHaveBeenCalledWith(
+      expect.stringContaining("completed without a terminal reply"),
+    );
+    expect(replyDispatcherMockState.deliver).toHaveBeenCalledWith(
+      {
+        text: expect.stringContaining("I hit an issue before I could finish that request"),
+      },
+      expect.objectContaining({ kind: "progress", stage: "failed" }),
+    );
+    expect(replyDispatcherMockState.settle).toHaveBeenCalledTimes(1);
+  });
+
   it("classifies slow optional connector startup as a bounded employee comms timeout", async () => {
     gatewayRuntimeMockState.callGatewayFromCli.mockReset();
     gatewayRuntimeMockState.callGatewayFromCli

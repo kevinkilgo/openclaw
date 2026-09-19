@@ -322,6 +322,9 @@ function classifyEmployeeCommsFailure(error: unknown): MSTeamsEmployeeCommsFailu
   if (/send|delivery|recipient/i.test(text)) {
     return "outbound-send-failed";
   }
+  if (/terminal reply|final response|visible proof/i.test(text)) {
+    return "recipient-visible-proof-missing";
+  }
   return "unknown";
 }
 
@@ -696,10 +699,12 @@ async function dispatchViaEmployeeContainer(params: {
   }
   const text = waitResult.terminalReply?.text?.trim();
   if (!text) {
-    trace.finalStatus = "completed";
+    const err = new Error("employee container agent run completed without a terminal reply");
+    trace.finalStatus = "failed";
     trace.totalLatencyMs = nowMs() - startedAtMs;
+    trace.failureClassification = classifyEmployeeCommsFailure(err);
     logEmployeeCommsTrace({ log: params.log, trace });
-    return { kind: "completed", finalResponses: 0 };
+    throw err;
   }
   if (isEmployeeConnectorReadinessFailureReply(text)) {
     const err = createEmployeeConnectorReadinessError({
@@ -765,6 +770,7 @@ export async function dispatchMSTeamsInboundTurn(params: {
   timestamp?: Date;
   contextVisibilityMode: "all" | "allowlist" | "allowlist_quote";
   mentionWasEffective: boolean;
+  onHardRulesDeliveryEvidence?: MSTeamsMessageHandlerDeps["onHardRulesDeliveryEvidence"];
   conversationHistories: Map<string, HistoryEntry[]>;
   historyLimit: number;
 }): Promise<MSTeamsInboundDispatchResult> {
