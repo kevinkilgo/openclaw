@@ -18,7 +18,7 @@ import type { MSTeamsAccessTokenProvider } from "./attachments/types.js";
 import type { MSTeamsSdkCloudOptions } from "./cloud.js";
 import type { StoredConversationReference } from "./conversation-store.js";
 import { sendTeamsDeliveryArtifactActivity } from "./delivery-artifact.js";
-import { sendTeamsActivityWithBudget } from "./delivery-budget.js";
+import { measureTeamsActivity, sendTeamsActivityWithBudget } from "./delivery-budget.js";
 import { classifyMSTeamsSendError } from "./errors.js";
 import { prepareFileConsentActivity, requiresFileConsent } from "./file-consent-helpers.js";
 import { formatMSTeamsMarkdown } from "./format.js";
@@ -478,14 +478,15 @@ export async function sendMSTeamsMessages(params: {
                 ...activity,
                 text: chunk.text,
               };
-              const delivered = await sendTeamsActivityWithBudget({
-                activity: chunkActivity,
-                send: async (budgetedActivity) => {
-                  providerDispatchStarted = true;
-                  return await sendFn(budgetedActivity);
-                },
-              });
-              textWindowMessageIds.push(extractMessageId(delivered.result) ?? "unknown");
+              const measurement = measureTeamsActivity(chunkActivity);
+              if (measurement.overBudget) {
+                throw new Error(
+                  `Teams text-window chunk ${chunk.index}/${chunk.total} exceeded ${measurement.budgetBytes} byte activity budget`,
+                );
+              }
+              providerDispatchStarted = true;
+              const delivered = await sendFn(chunkActivity);
+              textWindowMessageIds.push(extractMessageId(delivered) ?? "unknown");
             }
             return { delivered: undefined, textWindowMessageIds };
           }
