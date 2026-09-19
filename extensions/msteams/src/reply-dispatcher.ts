@@ -35,6 +35,10 @@ import {
   formatUnknownError,
 } from "./errors.js";
 import {
+  buildMSTeamsHardRulesDeliveryEvidence,
+  type MSTeamsHardRulesDeliveryEvidence,
+} from "./hard-rules-evidence.js";
+import {
   buildConversationReference,
   type MSTeamsRenderedMessage,
   renderReplyPayloadsToMessages,
@@ -62,6 +66,7 @@ export function createMSTeamsReplyDispatcher(params: {
   replyStyle: MSTeamsReplyStyle;
   textLimit: number;
   onSentMessageIds?: (ids: string[]) => void;
+  onHardRulesDeliveryEvidence?: (evidence: MSTeamsHardRulesDeliveryEvidence) => void;
   tokenProvider?: MSTeamsAccessTokenProvider;
   sharePointSiteId?: string;
 }) {
@@ -352,6 +357,22 @@ export function createMSTeamsReplyDispatcher(params: {
     delivery.settled = true;
     const outcome = deliveryOutcome(delivery);
     if (delivery.errors.length === 0) {
+      if (outcome.content && outcome.messageIds?.length) {
+        try {
+          params.onHardRulesDeliveryEvidence?.(
+            buildMSTeamsHardRulesDeliveryEvidence({
+              conversationId: params.conversationRef.conversation?.id,
+              conversationType: params.conversationRef.conversation?.conversationType,
+              sourceText: outcome.content,
+              messageIds: outcome.messageIds,
+            }),
+          );
+        } catch (error) {
+          params.log.warn?.("failed to record Teams hard-rules delivery evidence", {
+            error: formatUnknownError(error),
+          });
+        }
+      }
       delivery.finalization.resolve(outcome);
       return;
     }

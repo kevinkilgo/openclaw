@@ -19,6 +19,7 @@ import type { MSTeamsEmployeeOnboardingRequestStore } from "./employee-onboardin
 import { formatUnknownError } from "./errors.js";
 import { runMSTeamsFeedbackInvokeHandler } from "./feedback-invoke.js";
 import { runMSTeamsFileConsentInvokeHandler } from "./file-consent-invoke.js";
+import { createMSTeamsHardRulesEvidenceRecorder } from "./hard-rules-evidence-recorder.js";
 import { normalizeMSTeamsConversationId } from "./inbound.js";
 import {
   isCardActionInvokeAuthorized,
@@ -328,6 +329,7 @@ export async function monitorMSTeamsProvider(
     conversationStore,
     pollStore,
     employeeOnboardingStore,
+    onHardRulesDeliveryEvidence: createMSTeamsHardRulesEvidenceRecorder({ runtime, log }),
     log,
   };
   registerMSTeamsHandlers(handler, handlerDeps);

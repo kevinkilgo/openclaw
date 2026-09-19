@@ -18,7 +18,7 @@ import type { MSTeamsAccessTokenProvider } from "./attachments/types.js";
 import type { MSTeamsSdkCloudOptions } from "./cloud.js";
 import type { StoredConversationReference } from "./conversation-store.js";
 import { sendTeamsDeliveryArtifactActivity } from "./delivery-artifact.js";
-import { sendTeamsActivityWithBudget } from "./delivery-budget.js";
+import { measureTeamsActivity, sendTeamsActivityWithBudget } from "./delivery-budget.js";
 import { classifyMSTeamsSendError } from "./errors.js";
 import { prepareFileConsentActivity, requiresFileConsent } from "./file-consent-helpers.js";
 import { formatMSTeamsMarkdown } from "./format.js";
@@ -36,6 +36,7 @@ import { getMSTeamsRuntime } from "./runtime.js";
 import { sendMSTeamsActivityWithReference } from "./sdk-proactive.js";
 import type { MSTeamsActivityLike } from "./sdk-types.js";
 import type { MSTeamsApp } from "./sdk.js";
+import { planTeamsTextWindowChunks, shouldUseTeamsTextWindowPlan } from "./text-window-planner.js";
 
 /**
  * MSTeams-specific media size limit (100MB).
@@ -465,6 +466,31 @@ export async function sendMSTeamsMessages(params: {
               : undefined;
           delete activity["_pendingUploadId"];
 
+          if (shouldUseTeamsTextWindowPlan(activity)) {
+            const text = activity.text;
+            const plan = planTeamsTextWindowChunks(text);
+            const textWindowMessageIds: string[] = [];
+            for (const chunk of plan.chunks) {
+              // Text-window chunks are ordinary message activities. Once any
+              // chunk is accepted, a later provider error is partial delivery
+              // and must surface as the provider error, not "not dispatched."
+              const chunkActivity = {
+                ...activity,
+                text: chunk.text,
+              };
+              const measurement = measureTeamsActivity(chunkActivity);
+              if (measurement.overBudget) {
+                throw new Error(
+                  `Teams text-window chunk ${chunk.index}/${chunk.total} exceeded ${measurement.budgetBytes} byte activity budget`,
+                );
+              }
+              providerDispatchStarted = true;
+              const delivered = await sendFn(chunkActivity);
+              textWindowMessageIds.push(extractMessageId(delivered) ?? "unknown");
+            }
+            return { delivered: undefined, textWindowMessageIds };
+          }
+
           const delivered = await sendTeamsActivityWithBudget({
             activity,
             send: async (budgetedActivity) => {
@@ -502,17 +528,25 @@ export async function sendMSTeamsMessages(params: {
       }
       throw error;
     }
-    const responseRecord = response as { delivered?: unknown; artifactMessageId?: string };
-    const messageId = extractMessageId(responseRecord.delivered ?? response) ?? "unknown";
+    const responseRecord = response as {
+      delivered?: unknown;
+      artifactMessageId?: string;
+      textWindowMessageIds?: string[];
+    };
+    const messageId =
+      responseRecord.textWindowMessageIds?.[0] ??
+      extractMessageId(responseRecord.delivered ?? response) ??
+      "unknown";
 
     // Store the activity ID so the accept handler can replace the consent card in-place
     if (pendingUploadId && messageId !== "unknown") {
       setPendingUploadActivityId(pendingUploadId, messageId);
     }
 
-    return [messageId, responseRecord.artifactMessageId].filter((id): id is string =>
-      Boolean(id && id !== "unknown"),
-    );
+    return [
+      ...(responseRecord.textWindowMessageIds ?? [messageId]),
+      responseRecord.artifactMessageId,
+    ].filter((id): id is string => Boolean(id && id !== "unknown"));
   };
 
   const sendMessageBatchInContext = async (
