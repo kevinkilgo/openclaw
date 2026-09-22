@@ -61,9 +61,6 @@ type GatewayAgentWaitResult = {
 const EMPLOYEE_CONTAINER_SESSION_CLAIM_RETRY_ATTEMPTS = 3;
 const EMPLOYEE_CONTAINER_SESSION_CLAIM_RETRY_DELAY_MS = 1_000;
 const EMPLOYEE_CONTAINER_DEFAULT_WAIT_TIMEOUT_MS = 60_000;
-const EMPLOYEE_CONTAINER_PROGRESS_ACK_THRESHOLD_MS = 120_000;
-const EMPLOYEE_CONTAINER_PROGRESS_ACK_TEXT =
-  "I'm working on that now. Larger reports or connector-heavy requests can take a few minutes; I'll send the full result here when it's ready.";
 const EMPLOYEE_CONTAINER_FAILURE_UPDATE_TEXT =
   "I hit an issue before I could finish that request. I've logged it and we're working on the fix; I'll notify you when it's ready to retry.";
 const EMPLOYEE_CONTAINER_MODEL_UNAVAILABLE_TEXT =
@@ -624,17 +621,6 @@ async function dispatchViaEmployeeContainer(params: {
       }
       trace.employeeRunId = accepted.runId;
       trace.dispatchAcceptedAtMs = nowMs();
-      if (waitTimeoutMs >= EMPLOYEE_CONTAINER_PROGRESS_ACK_THRESHOLD_MS) {
-        await deliverEmployeeContainerStatusUpdate({
-          delivery: params.delivery,
-          settleDelivery: params.settleDelivery,
-          text: EMPLOYEE_CONTAINER_PROGRESS_ACK_TEXT,
-          routeAgentId: params.routeAgentId,
-          stage: "accepted",
-          dedupeKey: idempotencyKey,
-          log: params.log,
-        });
-      }
       // SAFETY: agent.wait responses are narrowed by status/error/terminalReply checks before data is delivered.
       waitResult = (await callGatewayFromCli(
         "agent.wait",

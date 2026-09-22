@@ -210,26 +210,19 @@ describe("msteams employee container dispatch", () => {
     expect(replyDispatcherMockState.settle).toHaveBeenCalledTimes(1);
   });
 
-  it("acknowledges accepted long-running employee turns before the final reply", async () => {
+  it("delivers long-running employee turns without an accepted progress warning", async () => {
     const cfg = createLongWaitConfig();
     const runtime = { error: vi.fn() } as unknown as RuntimeEnv;
     const handler = createMSTeamsMessageHandler(createMSTeamsMessageHandlerDeps({ cfg, runtime }));
 
     await handler(createContext());
 
-    expect(replyDispatcherMockState.deliver).toHaveBeenNthCalledWith(
-      1,
-      {
-        text: expect.stringContaining("I'm working on that now"),
-      },
-      expect.objectContaining({ kind: "progress", stage: "accepted" }),
-    );
-    expect(replyDispatcherMockState.deliver).toHaveBeenNthCalledWith(
-      2,
+    expect(replyDispatcherMockState.deliver).toHaveBeenCalledWith(
       { text: "Reply from employee main" },
       expect.objectContaining({ kind: "final", stage: "final" }),
     );
-    expect(replyDispatcherMockState.settle).toHaveBeenCalledTimes(2);
+    expect(replyDispatcherMockState.deliver).toHaveBeenCalledTimes(1);
+    expect(replyDispatcherMockState.settle).toHaveBeenCalledTimes(1);
   });
 
   it("defaults Teams employee dispatch waits to the simple-turn SLA", async () => {
@@ -511,12 +504,6 @@ describe("msteams employee container dispatch", () => {
         text: expect.stringContaining("kkilgo test lane is temporarily unavailable"),
       },
       expect.objectContaining({ kind: "progress", stage: "failed" }),
-    );
-    expect(replyDispatcherMockState.deliver).not.toHaveBeenCalledWith(
-      {
-        text: expect.stringContaining("I'm working on that now"),
-      },
-      expect.anything(),
     );
     expect(replyDispatcherMockState.deliver).not.toHaveBeenCalledWith(
       {

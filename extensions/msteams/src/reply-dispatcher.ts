@@ -264,6 +264,7 @@ export function createMSTeamsReplyDispatcher(params: {
       mediaMaxBytes,
       feedbackLoopEnabled,
       serviceUrlBoundary: resolveMSTeamsSdkCloudOptions(msteamsCfg),
+      msteamsConfig: msteamsCfg,
     });
   };
 
