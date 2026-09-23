@@ -210,6 +210,31 @@ describe("msteams employee container dispatch", () => {
     expect(replyDispatcherMockState.settle).toHaveBeenCalledTimes(1);
   });
 
+  it("starts a Teams typing indicator while the employee container handles the turn", async () => {
+    const cfg = createConfig();
+    const runtime = { error: vi.fn() } as unknown as RuntimeEnv;
+    const handler = createMSTeamsMessageHandler(createMSTeamsMessageHandlerDeps({ cfg, runtime }));
+    const context = createContext();
+
+    await handler(context);
+    await Promise.resolve();
+
+    expect(context.sendActivity).toHaveBeenCalledWith({ type: "typing" });
+  });
+
+  it("respects the Teams typingIndicator=false switch for employee container turns", async () => {
+    const cfg = createConfig();
+    cfg.channels!.msteams!.typingIndicator = false;
+    const runtime = { error: vi.fn() } as unknown as RuntimeEnv;
+    const handler = createMSTeamsMessageHandler(createMSTeamsMessageHandlerDeps({ cfg, runtime }));
+    const context = createContext();
+
+    await handler(context);
+    await Promise.resolve();
+
+    expect(context.sendActivity).not.toHaveBeenCalledWith({ type: "typing" });
+  });
+
   it("delivers long-running employee turns without an accepted progress warning", async () => {
     const cfg = createLongWaitConfig();
     const runtime = { error: vi.fn() } as unknown as RuntimeEnv;
