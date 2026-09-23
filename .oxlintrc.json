@@ -421,6 +421,15 @@
     },
     {
       "files": [
+        "extensions/workboard/browser/lib/workboard/index.test.ts",
+        "extensions/workboard/browser/pages/workboard/view.test.ts"
+      ],
+      "rules": {
+        "max-lines": ["error", { "max": 5000, "skipBlankLines": true, "skipComments": true }]
+      }
+    },
+    {
+      "files": [
         "src/agents/control/agent-control.ts",
         "src/commands/doctor-config-preflight.ts",
         "src/state/openclaw-database-preflight.ts"

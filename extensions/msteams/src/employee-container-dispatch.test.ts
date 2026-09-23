@@ -558,11 +558,7 @@ describe("msteams employee container dispatch", () => {
             opts.signal?.addEventListener(
               "abort",
               () => {
-                const reason =
-                  opts.signal?.reason instanceof Error
-                    ? opts.signal.reason
-                    : new Error("OpenAI device-code sign-in expired");
-                reject(reason);
+                reject(new Error("OpenAI device-code sign-in expired"));
               },
               { once: true },
             );
