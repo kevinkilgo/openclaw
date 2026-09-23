@@ -1,4 +1,5 @@
 // Msteams tests cover messenger plugin behavior.
+import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -23,6 +24,7 @@ vi.mock("./graph-upload.js", async (importOriginal) => {
   };
 });
 
+import { measureTeamsActivity } from "./delivery-budget.js";
 import {
   buildConversationReference,
   renderReplyPayloadsToMessages,
@@ -30,6 +32,7 @@ import {
 } from "./messenger.js";
 import { setMSTeamsRuntime } from "./runtime.js";
 import type { MSTeamsApp } from "./sdk.js";
+import { reconstructTeamsTextWindowChunks } from "./text-window-planner.js";
 
 const chunkMarkdownText = (text: string, limit: number) => {
   if (!text) {
@@ -356,6 +359,63 @@ describe("msteams messenger", () => {
       expect(capturedConversationId).toBe("19:abc@thread.tacv2");
     });
 
+    it("delivers routine long replies as reconstructable text-window chunks without artifacts or cards", async () => {
+      const longReply = Array.from(
+        { length: 80 },
+        (_, index) =>
+          `Paragraph ${index + 1}: routine messenger text-window delivery keeps this prose inline.`,
+      ).join("\n\n");
+      const sentActivities: Array<Record<string, unknown>> = [];
+
+      const ids = await sendMSTeamsMessages({
+        replyStyle: "top-level",
+        app: createMockApp({
+          createFn: async (activity: unknown) => {
+            const record = activity as Record<string, unknown>;
+            sentActivities.push(record);
+            return { id: `activity-${sentActivities.length}` };
+          },
+        }),
+        appId: "app123",
+        conversationRef: baseRef,
+        messages: [{ text: longReply }],
+      });
+
+      expect(sentActivities.length).toBeGreaterThan(1);
+      expect(ids).toEqual(sentActivities.map((_, index) => `activity-${index + 1}`));
+      expect(
+        reconstructTeamsTextWindowChunks(sentActivities.map((activity) => String(activity.text))),
+      ).toBe(longReply);
+      expect(
+        createHash("sha256")
+          .update(
+            reconstructTeamsTextWindowChunks(
+              sentActivities.map((activity) => String(activity.text)),
+            ),
+          )
+          .digest("hex"),
+      ).toBe(createHash("sha256").update(longReply).digest("hex"));
+      for (const activity of sentActivities) {
+        expect(typeof activity.text).toBe("string");
+        const measurement = measureTeamsActivity(activity);
+        expect(measurement.jsonUtf8Bytes).toBeLessThan(80 * 1024);
+        expect(measurement.jsonUtf16Bytes).toBeLessThan(80 * 1024);
+        expect(measurement.overBudget).toBe(false);
+        expect(activity.attachments).toBeUndefined();
+        expect(
+          (activity.channelData as { openclawDeliveryEnvelope?: unknown } | undefined)
+            ?.openclawDeliveryEnvelope,
+        ).toBeUndefined();
+        expect(JSON.stringify(activity)).not.toContain("contentUrl");
+        expect(JSON.stringify(activity)).not.toContain("document");
+        expect(JSON.stringify(activity)).not.toContain("application/vnd.microsoft.card");
+        expect(JSON.stringify(activity)).not.toContain(
+          "application/vnd.microsoft.teams.card.file.consent",
+        );
+        expect(JSON.stringify(activity)).not.toContain("artifactPath");
+      }
+    });
+
     it("requires SharePoint storage for channel files", async () => {
       const tmpDir = await mkdtemp(path.join(resolvePreferredOpenClawTmpDir(), "msteams-storage-"));
       const localFile = path.join(tmpDir, "note.txt");
@@ -448,6 +508,119 @@ describe("msteams messenger", () => {
       expect(sendActivity).toHaveBeenCalledTimes(1);
       expect(error).toBeInstanceOf(Error);
       expect(error).not.toBeInstanceOf(PlatformMessageNotDispatchedError);
+    });
+
+    it("surfaces partial failure after text-window chunks have already been accepted", async () => {
+      const longReply = "accepted chunk then provider failure ".repeat(180);
+      const attempts: string[] = [];
+      const error = await sendMSTeamsMessages({
+        replyStyle: "top-level",
+        app: createMockApp({
+          createFn: async (activity: unknown) => {
+            const text = (activity as { text?: string }).text ?? "";
+            attempts.push(text);
+            if (attempts.length === 2) {
+              throw Object.assign(new Error("provider rejected later chunk"), { statusCode: 400 });
+            }
+            return { id: `id:${attempts.length}` };
+          },
+        }),
+        appId: "app123",
+        conversationRef: baseRef,
+        messages: [{ text: longReply }],
+        retry: { maxAttempts: 3, baseDelayMs: 0, maxDelayMs: 0 },
+      }).catch((cause: unknown) => cause);
+
+      expect(attempts).toHaveLength(2);
+      expect(attempts[0]).toMatch(/^Part 1\/\d+\n\n/u);
+      expect(error).toMatchObject({ statusCode: 400 });
+      expect(error).not.toBeInstanceOf(PlatformMessageNotDispatchedError);
+    });
+
+    it("backs off and retries text-window chunks after HTTP 429 before delivery", async () => {
+      const longReply =
+        "Teams rate-limit retry should preserve text-window chunk delivery. ".repeat(160);
+      const attempts: Array<Record<string, unknown>> = [];
+      const retryEvents: Array<{ nextAttempt: number; delayMs: number }> = [];
+
+      const ids = await sendMSTeamsMessages({
+        replyStyle: "top-level",
+        app: createMockApp({
+          createFn: async (activity: unknown) => {
+            const record = activity as Record<string, unknown>;
+            attempts.push(record);
+            if (attempts.length === 1) {
+              throw Object.assign(new Error("rate limited before delivery"), { statusCode: 429 });
+            }
+            return { id: `chunk-id-${attempts.length - 1}` };
+          },
+        }),
+        appId: "app123",
+        conversationRef: baseRef,
+        messages: [{ text: longReply }],
+        retry: { maxAttempts: 2, baseDelayMs: 0, maxDelayMs: 0 },
+        onRetry: (event) =>
+          retryEvents.push({ nextAttempt: event.nextAttempt, delayMs: event.delayMs }),
+      });
+
+      const deliveredActivities = attempts.slice(1);
+      expect(deliveredActivities.length).toBeGreaterThan(1);
+      expect(retryEvents).toEqual([{ nextAttempt: 2, delayMs: 0 }]);
+      expect(ids).toEqual(deliveredActivities.map((_, index) => `chunk-id-${index + 1}`));
+      expect(
+        reconstructTeamsTextWindowChunks(
+          deliveredActivities.map((activity) => String(activity.text)),
+        ),
+      ).toBe(longReply);
+      for (const activity of deliveredActivities) {
+        expect(measureTeamsActivity(activity).overBudget).toBe(false);
+        expect(activity.attachments).toBeUndefined();
+        expect(JSON.stringify(activity)).not.toContain("openclawDeliveryEnvelope");
+        expect(JSON.stringify(activity)).not.toContain("artifactPath");
+        expect(JSON.stringify(activity)).not.toContain("application/vnd.microsoft.card");
+        expect(JSON.stringify(activity)).not.toContain("contentUrl");
+        expect(JSON.stringify(activity)).not.toContain("document");
+      }
+    });
+
+    it("propagates text-window MessageSizeTooBig without artifact fallback", async () => {
+      const longReply =
+        "MessageSizeTooBig must not turn a text-window chunk into an artifact. ".repeat(120);
+      const attempts: Array<Record<string, unknown>> = [];
+      const error = await sendMSTeamsMessages({
+        replyStyle: "top-level",
+        app: createMockApp({
+          createFn: async (activity: unknown) => {
+            const record = activity as Record<string, unknown>;
+            attempts.push(record);
+            if (attempts.length === 2) {
+              throw Object.assign(new Error("MessageSizeTooBig"), {
+                statusCode: 413,
+                code: "MessageSizeTooBig",
+              });
+            }
+            return { id: `id:${attempts.length}` };
+          },
+        }),
+        appId: "app123",
+        conversationRef: baseRef,
+        messages: [{ text: longReply }],
+        retry: { maxAttempts: 3, baseDelayMs: 0, maxDelayMs: 0 },
+      }).catch((cause: unknown) => cause);
+
+      expect(attempts).toHaveLength(2);
+      expect(attempts[0]?.text).toMatch(/^Part 1\/\d+\n\n/u);
+      expect(error).toMatchObject({ statusCode: 413, code: "MessageSizeTooBig" });
+      expect(error).not.toBeInstanceOf(PlatformMessageNotDispatchedError);
+      for (const activity of attempts) {
+        expect(measureTeamsActivity(activity).overBudget).toBe(false);
+        expect(activity.attachments).toBeUndefined();
+        expect(JSON.stringify(activity)).not.toContain("openclawDeliveryEnvelope");
+        expect(JSON.stringify(activity)).not.toContain("artifactPath");
+        expect(JSON.stringify(activity)).not.toContain("application/vnd.microsoft.card");
+        expect(JSON.stringify(activity)).not.toContain("contentUrl");
+        expect(JSON.stringify(activity)).not.toContain("document");
+      }
     });
 
     it("does not claim no dispatch when proactive fallback preparation fails after a send", async () => {

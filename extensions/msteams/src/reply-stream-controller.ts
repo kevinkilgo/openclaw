@@ -14,6 +14,7 @@ import { extractMessageId } from "./media-helpers.js";
 import { buildMSTeamsMessageActivity } from "./message-activity.js";
 import type { MSTeamsMonitorLogger } from "./monitor-types.js";
 import type { MSTeamsTurnContext } from "./sdk-types.js";
+import { planTeamsTextWindowChunks } from "./text-window-planner.js";
 
 type Maybe<T> = T | undefined;
 
@@ -212,7 +213,7 @@ export function createTeamsReplyStreamController(params: {
   const splitLongFinalPayload = (
     payload: ReplyPayload,
   ):
-    | { previewPayload: ReplyPayload; postNativePayload: ReplyPayload; logicalContent: string }
+    | { previewPayload: ReplyPayload; postNativePayloads: ReplyPayload[]; logicalContent: string }
     | undefined => {
     if (typeof payload.text !== "string" || !payload.text) {
       return undefined;
@@ -223,22 +224,22 @@ export function createTeamsReplyStreamController(params: {
     ) {
       return undefined;
     }
-    const hardLimit = Math.min(payload.text.length, MSTEAMS_NATIVE_LONG_FINAL_PREVIEW_LIMIT);
-    let splitAt = payload.text.lastIndexOf("\n\n", hardLimit);
-    if (splitAt < 4000) {
-      splitAt = payload.text.lastIndexOf("\n", hardLimit);
-    }
-    if (splitAt < 4000) {
-      splitAt = hardLimit;
-    }
-    const previewText = payload.text.slice(0, splitAt).trimEnd();
-    const remainingText = payload.text.slice(splitAt).trimStart();
-    if (!previewText || !remainingText) {
+    const plan = planTeamsTextWindowChunks(payload.text);
+    if (plan.chunks.length <= 1) {
       return undefined;
     }
     return {
-      previewPayload: { ...payload, text: previewText, mediaUrl: undefined, mediaUrls: undefined },
-      postNativePayload: { ...payload, text: remainingText },
+      previewPayload: {
+        ...payload,
+        text: plan.chunks[0]!.text,
+        mediaUrl: undefined,
+        mediaUrls: undefined,
+      },
+      postNativePayloads: plan.chunks.slice(1).map((chunk, index, chunks) => ({
+        ...payload,
+        text: chunk.text,
+        ...(index === chunks.length - 1 ? {} : { mediaUrl: undefined, mediaUrls: undefined }),
+      })),
       logicalContent: payload.text,
     };
   };
@@ -438,7 +439,7 @@ export function createTeamsReplyStreamController(params: {
           streamFinalizationPending = true;
           pendingFinalPayload = fallbackPayloadForSuppressedFinal(longProgressFinal.previewPayload);
           longFinalLogicalContent = longProgressFinal.logicalContent;
-          longFinalPostNativePayloads = [longProgressFinal.postNativePayload];
+          longFinalPostNativePayloads = longProgressFinal.postNativePayloads;
           return undefined;
         } catch (err) {
           pendingFinalPayload = undefined;
@@ -536,7 +537,7 @@ export function createTeamsReplyStreamController(params: {
           streamMode === "partial" ? splitLongFinalPayload(payload) : undefined;
         if (longPartialFinal) {
           longFinalLogicalContent = longPartialFinal.logicalContent;
-          longFinalPostNativePayloads = [longPartialFinal.postNativePayload];
+          longFinalPostNativePayloads = longPartialFinal.postNativePayloads;
         }
         pendingFinalPayload = fallbackPayloadForSuppressedFinal(payload);
         streamFinalizationPending = true;

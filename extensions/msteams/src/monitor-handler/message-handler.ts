@@ -477,6 +477,7 @@ export function createMSTeamsMessageHandler(deps: MSTeamsMessageHandlerDeps) {
       timestamp,
       contextVisibilityMode,
       mentionWasEffective: mentionDecision.effectiveWasMentioned,
+      onHardRulesDeliveryEvidence: deps.onHardRulesDeliveryEvidence,
       conversationHistories,
       historyLimit,
     });

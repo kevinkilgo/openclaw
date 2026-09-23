@@ -23,6 +23,7 @@ vi.mock("./polls.js", () => ({
 
 import { msteamsPlugin } from "./channel.js";
 import { msteamsOutbound } from "./outbound.js";
+import { reconstructTeamsTextWindowChunks } from "./text-window-planner.js";
 
 const cfg = {
   channels: {
@@ -255,13 +256,14 @@ describe("msteamsOutbound cfg threading", () => {
     ]);
   });
 
-  it("keeps over-budget plain text intact for the Teams delivery envelope", async () => {
+  it("sends over-budget plain text as ordered Teams text-window chunks", async () => {
     const sendText = requireSendText();
     const onDeliveryResult = vi.fn();
-    const longText = "over-budget Teams text should use artifact fallback ".repeat(2500);
+    const longText = "over-budget Teams text should stay in text-window chunks. ".repeat(2500);
     mocks.sendMessageMSTeams.mockImplementation(async () => {
+      const messageIndex = mocks.sendMessageMSTeams.mock.calls.length;
       return {
-        messageId: "msg-envelope",
+        messageId: `msg-text-window-${messageIndex}`,
         conversationId: "conv-1",
       };
     });
@@ -273,16 +275,43 @@ describe("msteamsOutbound cfg threading", () => {
       onDeliveryResult,
     });
 
-    expect(mocks.sendMessageMSTeams).toHaveBeenCalledTimes(1);
-    expect(mocks.sendMessageMSTeams).toHaveBeenCalledWith({
-      cfg,
-      to: "conversation:abc",
-      text: longText,
-    });
+    const sentText = mocks.sendMessageMSTeams.mock.calls.map(([call]) => call.text);
+    expect(sentText.length).toBeGreaterThan(1);
+    expect(reconstructTeamsTextWindowChunks(sentText)).toBe(longText);
+    expect(sentText.every((chunk) => chunk.length <= 1200)).toBe(true);
+    expect(mocks.sendAdaptiveCardMSTeams).not.toHaveBeenCalled();
+    expect(mocks.sendMessageMSTeams.mock.calls.every(([call]) => !call.mediaUrl)).toBe(true);
     expect(result).toMatchObject({
-      messageId: "msg-envelope",
+      messageId: `msg-text-window-${sentText.length}`,
     });
+    expect(onDeliveryResult).toHaveBeenCalledTimes(sentText.length);
+    expect(onDeliveryResult.mock.calls.map(([delivery]) => delivery.messageId)).toEqual(
+      sentText.map((_, index) => `msg-text-window-${index + 1}`),
+    );
+  });
+
+  it("stops sequential text-window delivery on chunk failure without claiming final delivery", async () => {
+    const sendText = requireSendText();
+    const onDeliveryResult = vi.fn();
+    const longText = "bounded failure Teams text-window chunk. ".repeat(180);
+    mocks.sendMessageMSTeams
+      .mockResolvedValueOnce({ messageId: "msg-window-1", conversationId: "conv-1" })
+      .mockRejectedValueOnce(new Error("second chunk failed"));
+
+    await expect(
+      sendText({
+        cfg,
+        to: "conversation:abc",
+        text: longText,
+        onDeliveryResult,
+      }),
+    ).rejects.toThrow("second chunk failed");
+
+    expect(mocks.sendMessageMSTeams).toHaveBeenCalledTimes(2);
     expect(onDeliveryResult).toHaveBeenCalledTimes(1);
+    expect(onDeliveryResult.mock.calls.map(([delivery]) => delivery.messageId)).toEqual([
+      "msg-window-1",
+    ]);
   });
 
   it("passes resolved cfg and media roots for media sends", async () => {
@@ -490,11 +519,12 @@ describe("msteamsOutbound cfg threading", () => {
     });
   });
 
-  it("chunks text fallback payloads that only carry channel metadata", async () => {
-    mocks.sendMessageMSTeams
-      .mockResolvedValueOnce({ messageId: "msg-text-1", conversationId: "conv-text" })
-      .mockResolvedValueOnce({ messageId: "msg-text-2", conversationId: "conv-text" });
+  it("uses text-window chunks for normal long fallback payloads that only carry channel metadata", async () => {
     const text = "x".repeat(4001);
+    mocks.sendMessageMSTeams.mockImplementation(async () => ({
+      messageId: `msg-text-${mocks.sendMessageMSTeams.mock.calls.length}`,
+      conversationId: "conv-text",
+    }));
 
     const result = await requireSendPayload()({
       cfg,
@@ -506,28 +536,23 @@ describe("msteamsOutbound cfg threading", () => {
       },
     });
 
-    expect(mocks.sendMessageMSTeams).toHaveBeenNthCalledWith(1, {
-      cfg,
-      to: "conversation:abc",
-      text: "x".repeat(2500),
-    });
-    expect(mocks.sendMessageMSTeams).toHaveBeenNthCalledWith(2, {
-      cfg,
-      to: "conversation:abc",
-      text: "x".repeat(1501),
-    });
+    const sentText = mocks.sendMessageMSTeams.mock.calls.map(([call]) => call.text);
+    expect(sentText.length).toBeGreaterThan(1);
+    expect(reconstructTeamsTextWindowChunks(sentText)).toBe(text);
+    expect(mocks.sendAdaptiveCardMSTeams).not.toHaveBeenCalled();
+    expect(mocks.sendMessageMSTeams.mock.calls.every(([call]) => !call.mediaUrl)).toBe(true);
     expect(result).toEqual({
       channel: "msteams",
-      messageId: "msg-text-2",
+      messageId: `msg-text-${sentText.length}`,
       target: { kind: "conversation", id: "conv-text" },
     });
   });
 
   it.each([
-    { configuredLimit: 6000, textLength: 5000, expectedChunkLengths: [2500, 2500] },
-    { configuredLimit: 1000, textLength: 1500, expectedChunkLengths: [1000, 500] },
+    { configuredLimit: 6000, textLength: 1000, expectedChunkLengths: [1000] },
+    { configuredLimit: 1000, textLength: 1100, expectedChunkLengths: [1000, 100] },
   ])(
-    "uses the capped $configuredLimit-character configured limit for fallback payloads",
+    "uses configured limits for non-text-window fallback payload chunks",
     async ({ configuredLimit, textLength, expectedChunkLengths }) => {
       const configuredCfg = {
         channels: {
