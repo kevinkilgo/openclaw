@@ -482,6 +482,17 @@ if (args[0] === 'pr' && args[1] === 'view') {
       });
       value.total_count = value.workflow_runs.length;
     }
+  } else if (/^repos\\/fixture\\/repo\\/commits\\/[0-9a-f]{40}$/.test(endpoint)) {
+    const oid = endpoint.split('/').at(-1);
+    value = {
+      commit: {
+        author: {
+          name: runGit(['-C', origin, 'show', '-s', '--format=%an', oid]),
+          email: runGit(['-C', origin, 'show', '-s', '--format=%ae', oid]),
+        },
+      },
+      author: { login: 'fixture-author', type: 'User' },
+    };
   } else {
     throw new Error('Unexpected GitHub API endpoint ' + endpoint);
   }

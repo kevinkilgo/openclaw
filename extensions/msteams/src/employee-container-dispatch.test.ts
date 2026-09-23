@@ -210,26 +210,19 @@ describe("msteams employee container dispatch", () => {
     expect(replyDispatcherMockState.settle).toHaveBeenCalledTimes(1);
   });
 
-  it("acknowledges accepted long-running employee turns before the final reply", async () => {
+  it("delivers long-running employee turns without an accepted progress warning", async () => {
     const cfg = createLongWaitConfig();
     const runtime = { error: vi.fn() } as unknown as RuntimeEnv;
     const handler = createMSTeamsMessageHandler(createMSTeamsMessageHandlerDeps({ cfg, runtime }));
 
     await handler(createContext());
 
-    expect(replyDispatcherMockState.deliver).toHaveBeenNthCalledWith(
-      1,
-      {
-        text: expect.stringContaining("I'm working on that now"),
-      },
-      expect.objectContaining({ kind: "progress", stage: "accepted" }),
-    );
-    expect(replyDispatcherMockState.deliver).toHaveBeenNthCalledWith(
-      2,
+    expect(replyDispatcherMockState.deliver).toHaveBeenCalledWith(
       { text: "Reply from employee main" },
       expect.objectContaining({ kind: "final", stage: "final" }),
     );
-    expect(replyDispatcherMockState.settle).toHaveBeenCalledTimes(2);
+    expect(replyDispatcherMockState.deliver).toHaveBeenCalledTimes(1);
+    expect(replyDispatcherMockState.settle).toHaveBeenCalledTimes(1);
   });
 
   it("defaults Teams employee dispatch waits to the simple-turn SLA", async () => {
@@ -482,6 +475,46 @@ describe("msteams employee container dispatch", () => {
     expect(runtime.error).not.toHaveBeenCalled();
   });
 
+  it("settles OpenAI subscription cooldown without starting repeated Teams recovery chatter", async () => {
+    gatewayRuntimeMockState.callGatewayFromCli.mockReset();
+    gatewayRuntimeMockState.callGatewayFromCli
+      .mockResolvedValueOnce({ runId: "run-cooldown" })
+      .mockResolvedValueOnce({
+        status: "error",
+        error:
+          "You've reached your Codex subscription usage limit. Next reset in 2 days, Sep 19 at 8:10 AM UTC. Wait until the reset time, use another Codex account if available, or switch to another configured model/provider.",
+      })
+      .mockResolvedValueOnce({ runId: "run-cooldown-redrive" })
+      .mockResolvedValueOnce({
+        status: "error",
+        error:
+          "You've reached your Codex subscription usage limit. Next reset in 2 days, Sep 19 at 8:10 AM UTC. Wait until the reset time, use another Codex account if available, or switch to another configured model/provider.",
+      });
+    const cfg = createLongWaitConfig();
+    const runtime = { error: vi.fn() } as unknown as RuntimeEnv;
+    const handler = createMSTeamsMessageHandler(createMSTeamsMessageHandlerDeps({ cfg, runtime }));
+
+    await handler(createContext());
+    await handler(createContext());
+
+    expect(loginRuntimeMockState.runDeviceLoginFlow).not.toHaveBeenCalled();
+    expect(replyDispatcherMockState.deliver).toHaveBeenNthCalledWith(
+      1,
+      {
+        text: expect.stringContaining("kkilgo test lane is temporarily unavailable"),
+      },
+      expect.objectContaining({ kind: "progress", stage: "failed" }),
+    );
+    expect(replyDispatcherMockState.deliver).not.toHaveBeenCalledWith(
+      {
+        text: expect.stringContaining("I hit an issue before I could finish that request"),
+      },
+      expect.anything(),
+    );
+    expect(replyDispatcherMockState.deliver).toHaveBeenCalledTimes(1);
+    expect(runtime.error).toHaveBeenCalledWith(expect.stringContaining("subscription usage limit"));
+  });
+
   it("does not start Codex device-code login when the employee gateway rejects device pairing", async () => {
     gatewayRuntimeMockState.callGatewayFromCli.mockReset();
     gatewayRuntimeMockState.callGatewayFromCli.mockRejectedValueOnce(
@@ -524,12 +557,9 @@ describe("msteams employee container dispatch", () => {
           await new Promise((_resolve, reject) => {
             opts.signal?.addEventListener(
               "abort",
-              () =>
-                reject(
-                  opts.signal?.reason instanceof Error
-                    ? opts.signal.reason
-                    : new Error("OpenAI device-code sign-in expired"),
-                ),
+              () => {
+                reject(new Error("OpenAI device-code sign-in expired"));
+              },
               { once: true },
             );
           });

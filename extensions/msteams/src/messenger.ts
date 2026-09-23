@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { PlatformMessageNotDispatchedError } from "openclaw/plugin-sdk/error-runtime";
 // Msteams plugin module implements messenger behavior.
 import {
@@ -13,15 +14,22 @@ import { retryAsync } from "openclaw/plugin-sdk/retry-runtime";
 import { sleepWithAbort } from "openclaw/plugin-sdk/runtime-env";
 import { normalizeOptionalLowercaseString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { loadWebMedia } from "openclaw/plugin-sdk/web-media";
-import type { MarkdownTableMode, MSTeamsReplyStyle, OpenClawConfig } from "../runtime-api.js";
+import type {
+  MarkdownTableMode,
+  MSTeamsConfig,
+  MSTeamsReplyStyle,
+  OpenClawConfig,
+} from "../runtime-api.js";
 import type { MSTeamsAccessTokenProvider } from "./attachments/types.js";
 import type { MSTeamsSdkCloudOptions } from "./cloud.js";
 import type { StoredConversationReference } from "./conversation-store.js";
+import { sendTeamsDeliveryArtifactActivity } from "./delivery-artifact.js";
 import { sendTeamsActivityWithBudget } from "./delivery-budget.js";
 import { classifyMSTeamsSendError } from "./errors.js";
 import { prepareFileConsentActivity, requiresFileConsent } from "./file-consent-helpers.js";
 import { formatMSTeamsMarkdown } from "./format.js";
 import { buildTeamsFileInfoCard } from "./graph-chat.js";
+import { sendGraphNativeTextLive } from "./graph-message-send.js";
 import {
   getDriveItemProperties,
   requireMSTeamsSharePointSiteId,
@@ -35,6 +43,7 @@ import { getMSTeamsRuntime } from "./runtime.js";
 import { sendMSTeamsActivityWithReference } from "./sdk-proactive.js";
 import type { MSTeamsActivityLike } from "./sdk-types.js";
 import type { MSTeamsApp } from "./sdk.js";
+import { resolveDelegatedAccessToken, resolveMSTeamsCredentials } from "./token.js";
 
 /**
  * MSTeams-specific media size limit (100MB).
@@ -101,6 +110,139 @@ type MSTeamsSendRetryEvent = {
   delayMs: number;
   classification: ReturnType<typeof classifyMSTeamsSendError>;
 };
+
+type GraphNativeLongTextSettings = {
+  enabled: boolean;
+  allowedConversationIds: Set<string>;
+  chatIdByConversationId: Map<string, string>;
+  minTextBytes: number;
+  maxPayloadBytes: number;
+  tokenFile?: string;
+};
+
+type GraphNativeTokenFile = {
+  accessToken?: string;
+  access_token?: string;
+};
+
+function envFlagEnabled(value: string | undefined): boolean {
+  return value === "1" || value?.toLowerCase() === "true" || value?.toLowerCase() === "yes";
+}
+
+function splitEnvList(value: string | undefined): string[] {
+  return (value ?? "")
+    .split(/[\n,]/u)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function resolveEnvNumber(value: string | undefined, fallback: number): number {
+  if (!value) {
+    return fallback;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
+
+function parseGraphNativeChatMap(value: string | undefined): Map<string, string> {
+  const out = new Map<string, string>();
+  if (!value?.trim()) {
+    return out;
+  }
+  try {
+    // SAFETY: JSON.parse returns unknown; runtime shape guards below reject non-object maps.
+    const parsed = JSON.parse(value) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      // SAFETY: The parsed object shape is validated entry-by-entry before use.
+      for (const [conversationId, chatId] of Object.entries(parsed as Record<string, unknown>)) {
+        if (typeof chatId === "string" && conversationId.trim() && chatId.trim()) {
+          out.set(conversationId.trim(), chatId.trim());
+        }
+      }
+    }
+  } catch {
+    for (const entry of splitEnvList(value)) {
+      const [conversationId, ...chatIdParts] = entry.split("=");
+      const chatId = chatIdParts.join("=");
+      if (conversationId?.trim() && chatId.trim()) {
+        out.set(conversationId.trim(), chatId.trim());
+      }
+    }
+  }
+  return out;
+}
+
+function resolveGraphNativeLongTextSettings(env = process.env): GraphNativeLongTextSettings {
+  return {
+    enabled: envFlagEnabled(env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_ENABLED),
+    allowedConversationIds: new Set(
+      splitEnvList(env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_ALLOWED_CONVERSATION_IDS),
+    ),
+    chatIdByConversationId: parseGraphNativeChatMap(
+      env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_CHAT_MAP,
+    ),
+    minTextBytes: resolveEnvNumber(
+      env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_MIN_BYTES,
+      80 * 1024,
+    ),
+    maxPayloadBytes: resolveEnvNumber(
+      env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_MAX_PAYLOAD_BYTES,
+      90 * 1024,
+    ),
+    tokenFile: env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_TOKEN_FILE?.trim() || undefined,
+  };
+}
+
+async function readGraphNativeTokenFile(path: string | undefined): Promise<string | undefined> {
+  if (!path) {
+    return undefined;
+  }
+  const raw = await readFile(path, "utf8");
+  // SAFETY: Token-file fields are read as optional strings and validated before return.
+  const parsed = JSON.parse(raw) as GraphNativeTokenFile;
+  const token = parsed.accessToken ?? parsed.access_token;
+  return typeof token === "string" && token.trim() ? token.trim() : undefined;
+}
+
+async function resolveGraphNativeDelegatedToken(params: {
+  msteamsConfig?: MSTeamsConfig;
+  settings: GraphNativeLongTextSettings;
+}): Promise<string | undefined> {
+  const creds = resolveMSTeamsCredentials(params.msteamsConfig);
+  if (creds?.type === "secret") {
+    const token = await resolveDelegatedAccessToken({
+      tenantId: creds.tenantId,
+      clientId: creds.appId,
+      clientSecret: creds.appPassword,
+    });
+    if (token) {
+      return token;
+    }
+  }
+  return await readGraphNativeTokenFile(params.settings.tokenFile);
+}
+
+function shouldUseGraphNativeLongText(params: {
+  settings: GraphNativeLongTextSettings;
+  conversationId: string;
+  conversationType?: string;
+  message: MSTeamsRenderedMessage;
+}): { graphChatId: string } | undefined {
+  if (!params.settings.enabled || params.message.mediaUrl || !params.message.text) {
+    return undefined;
+  }
+  if (normalizeOptionalLowercaseString(params.conversationType) !== "personal") {
+    return undefined;
+  }
+  if (!params.settings.allowedConversationIds.has(params.conversationId)) {
+    return undefined;
+  }
+  if (Buffer.byteLength(params.message.text, "utf8") < params.settings.minTextBytes) {
+    return undefined;
+  }
+  const graphChatId = params.settings.chatIdByConversationId.get(params.conversationId);
+  return graphChatId ? { graphChatId } : undefined;
+}
 
 function normalizeConversationId(rawId: string): string {
   return rawId.split(";")[0] ?? rawId;
@@ -224,6 +366,7 @@ export function renderReplyPayloadsToMessages(
   const tableMode =
     options.tableMode ??
     getMSTeamsRuntime().channel.text.resolveMarkdownTableMode({
+      // SAFETY: The runtime config object is the canonical OpenClaw config shape at this boundary.
       cfg: getMSTeamsRuntime().config.current() as OpenClawConfig,
       channel: "msteams",
     });
@@ -396,6 +539,7 @@ export async function sendMSTeamsMessages(params: {
   /** Enable the Teams feedback loop (thumbs up/down) on sent messages. */
   feedbackLoopEnabled?: boolean;
   serviceUrlBoundary?: MSTeamsSdkCloudOptions;
+  msteamsConfig?: MSTeamsConfig;
 }): Promise<string[]> {
   const messages = params.messages.filter(
     (m) => (m.text && m.text.trim().length > 0) || m.mediaUrl,
@@ -440,7 +584,7 @@ export async function sendMSTeamsMessages(params: {
     sendFn: (activity: MSTeamsActivityLike) => Promise<unknown>,
     message: MSTeamsRenderedMessage,
     messageIndex: number,
-  ): Promise<string> => {
+  ): Promise<string[]> => {
     let activity: Record<string, unknown> | undefined;
     let pendingUploadId: string | undefined;
     let response: unknown;
@@ -464,12 +608,28 @@ export async function sendMSTeamsMessages(params: {
               : undefined;
           delete activity["_pendingUploadId"];
 
-          providerDispatchStarted = true;
           const delivered = await sendTeamsActivityWithBudget({
             activity,
-            send: sendFn,
+            send: async (budgetedActivity) => {
+              providerDispatchStarted = true;
+              return await sendFn(budgetedActivity);
+            },
           });
-          return delivered.result;
+          let artifactMessageId: string | undefined;
+          if (delivered.budgeted.kind === "artifact-digest") {
+            artifactMessageId = await sendTeamsDeliveryArtifactActivity({
+              artifact: delivered.budgeted.artifact,
+              conversationId: params.conversationRef.conversation?.id ?? "unknown",
+              conversationType: params.conversationRef.conversation?.conversationType,
+              tokenProvider: params.tokenProvider,
+              sharePointSiteId: params.sharePointSiteId,
+              send: async (artifactActivity) => {
+                providerDispatchStarted = true;
+                return await sendFn(artifactActivity);
+              },
+            });
+          }
+          return { delivered: delivered.result, artifactMessageId };
         },
         {
           messageIndex,
@@ -485,14 +645,52 @@ export async function sendMSTeamsMessages(params: {
       }
       throw error;
     }
-    const messageId = extractMessageId(response) ?? "unknown";
+    // SAFETY: The adapter response shape is probed by optional fields and falls back to the raw response.
+    const responseRecord = response as { delivered?: unknown; artifactMessageId?: string };
+    const messageId = extractMessageId(responseRecord.delivered ?? response) ?? "unknown";
 
     // Store the activity ID so the accept handler can replace the consent card in-place
     if (pendingUploadId && messageId !== "unknown") {
       setPendingUploadActivityId(pendingUploadId, messageId);
     }
 
-    return messageId;
+    return [messageId, responseRecord.artifactMessageId].filter((id): id is string =>
+      Boolean(id && id !== "unknown"),
+    );
+  };
+
+  const graphNativeLongTextSettings = resolveGraphNativeLongTextSettings();
+
+  const sendGraphNativeLongTextIfEnabled = async (
+    message: MSTeamsRenderedMessage,
+  ): Promise<string[] | undefined> => {
+    const conversationId = params.conversationRef.conversation?.id?.trim();
+    if (!conversationId) {
+      return undefined;
+    }
+    const plan = shouldUseGraphNativeLongText({
+      settings: graphNativeLongTextSettings,
+      conversationId,
+      conversationType: params.conversationRef.conversation?.conversationType,
+      message,
+    });
+    if (!plan || !message.text) {
+      return undefined;
+    }
+    const token = await resolveGraphNativeDelegatedToken({
+      msteamsConfig: params.msteamsConfig,
+      settings: graphNativeLongTextSettings,
+    });
+    if (!token) {
+      return undefined;
+    }
+    const sent = await sendGraphNativeTextLive({
+      route: { type: "chat", chatId: plan.graphChatId },
+      text: message.text,
+      token,
+      maxPayloadBytes: graphNativeLongTextSettings.maxPayloadBytes,
+    });
+    return sent.messageIds.length > 0 ? sent.messageIds : ["unknown"];
   };
 
   const sendMessageBatchInContext = async (
@@ -501,8 +699,16 @@ export async function sendMSTeamsMessages(params: {
     startIndex: number,
   ): Promise<string[]> => {
     const messageIds: string[] = [];
-    for (const [idx, message] of batch.entries()) {
-      messageIds.push(await sendMessageInContext(sendFn, message, startIndex + idx));
+    let messageIndex = startIndex;
+    for (const message of batch) {
+      const graphNativeMessageIds = await sendGraphNativeLongTextIfEnabled(message);
+      if (graphNativeMessageIds) {
+        messageIds.push(...graphNativeMessageIds);
+        messageIndex += graphNativeMessageIds.length;
+        continue;
+      }
+      messageIds.push(...(await sendMessageInContext(sendFn, message, messageIndex)));
+      messageIndex += 1;
     }
     return messageIds;
   };
@@ -548,7 +754,7 @@ export async function sendMSTeamsMessages(params: {
     for (const [idx, message] of messages.entries()) {
       const result = await withRevokedProxyFallback({
         run: async () => ({
-          ids: [await sendMessageInContext(sendFn, message, idx)],
+          ids: await sendMessageBatchInContext(sendFn, [message], idx),
           fellBack: false,
         }),
         onRevoked: async () => {

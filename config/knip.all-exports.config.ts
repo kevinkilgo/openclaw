@@ -156,6 +156,9 @@ const config = {
   ignoreIssues: {
     // The memory-state compatibility facade must retain its pre-registry-bundle type export.
     "src/plugins/memory-state.ts": ["types"],
+    // Graph dry-run builders and constants are intentionally exported as
+    // reviewable delivery contracts for focused tests and live proof tooling.
+    "extensions/msteams/src/graph-message-send.ts": ["exports", "types"],
     "test/fixtures/ts-topology/basic/**": [
       "exports",
       "nsExports",

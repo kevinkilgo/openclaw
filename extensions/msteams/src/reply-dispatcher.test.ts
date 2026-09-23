@@ -1161,8 +1161,14 @@ describe("createMSTeamsReplyDispatcher", () => {
     expect(sendMSTeamsMessagesMock).toHaveBeenCalledTimes(1);
   });
 
-  it("splits long personal block replies into native Teams continuation messages", async () => {
+  it("preserves long personal block replies for the Teams delivery envelope", async () => {
     registerHooks("message_sending");
+    renderReplyPayloadsToMessagesMock.mockImplementation((payloads) =>
+      payloads.flatMap((payload) =>
+        typeof payload.text === "string" && payload.text ? [{ text: payload.text }] : [],
+      ),
+    );
+    sendMSTeamsMessagesMock.mockResolvedValue(["digest-id"] as never);
     const dispatcher = createDispatcher("personal");
     const stream = getStreamMock();
     const longReply = [
@@ -1179,25 +1185,27 @@ describe("createMSTeamsReplyDispatcher", () => {
       visibleReplySent: true,
       content: longReply,
     });
-    expect(renderReplyPayloadsToMessagesMock).not.toHaveBeenCalled();
-    expect(sendMSTeamsMessagesMock).not.toHaveBeenCalled();
-    expect(stream.close).toHaveBeenCalledTimes(2);
-    const continuationTexts = stream.emit.mock.calls.map(([activity]) =>
+    expect(renderReplyPayloadsToMessagesMock).toHaveBeenCalledWith(
+      [{ text: longReply }],
+      expect.objectContaining({ chunkText: false }),
+    );
+    expect(sendMSTeamsMessagesMock).toHaveBeenCalledTimes(1);
+    expect(sendMSTeamsMessagesMock.mock.calls[0]?.[0].messages).toEqual([{ text: longReply }]);
+    expect(stream.close).not.toHaveBeenCalled();
+    const emittedTexts = stream.emit.mock.calls.map(([activity]) =>
       typeof activity === "string" ? activity : activity.text,
     );
-    expect(continuationTexts).toHaveLength(2);
-    expect(continuationTexts[0]).toContain("Response continued 1/");
-    expect(continuationTexts.at(-1)).toContain("END OF FULL RESPONSE");
-    expect(continuationTexts.every((text) => (text?.length ?? 0) <= 2_400)).toBe(true);
-    const continuationText = continuationTexts.join("\n");
-    expect(continuationText).not.toMatch(/…|\.\.\.$|truncated/i);
-    expect(continuationText).toContain("Executive summary");
-    expect(continuationText).toContain("A".repeat(100));
-    expect(continuationText).toContain("B".repeat(100));
-    expect(continuationText).toContain("C".repeat(100));
+    expect(emittedTexts.join("\n")).not.toContain("Response continued");
+    expect(emittedTexts.join("\n")).not.toContain("END OF FULL RESPONSE");
   });
 
-  it("sends long post-native progress remainder as native Teams continuation messages", async () => {
+  it("routes long post-native progress remainders through Teams message delivery", async () => {
+    renderReplyPayloadsToMessagesMock.mockImplementation((payloads) =>
+      payloads.flatMap((payload) =>
+        typeof payload.text === "string" && payload.text ? [{ text: payload.text }] : [],
+      ),
+    );
+    sendMSTeamsMessagesMock.mockResolvedValue(["post-native-digest-id"] as never);
     const dispatcher = createDispatcher("personal", { streaming: { mode: "progress" } });
     const stream = getStreamMock();
     const previewPrefix = "A".repeat(12_100);
@@ -1215,20 +1223,20 @@ describe("createMSTeamsReplyDispatcher", () => {
       content: fullReply,
     });
     expect(outcome?.messageIds?.[0]).toBe("stream-final");
-    expect(outcome?.messageIds?.length).toBeGreaterThan(2);
-    expect(renderReplyPayloadsToMessagesMock).not.toHaveBeenCalled();
-    expect(sendMSTeamsMessagesMock).not.toHaveBeenCalled();
+    expect(outcome?.messageIds).toContain("post-native-digest-id");
+    expect(renderReplyPayloadsToMessagesMock).toHaveBeenCalledWith(
+      [{ text: expect.stringContaining(remainder.slice(0, 100)) }],
+      expect.objectContaining({ chunkText: false }),
+    );
+    expect(sendMSTeamsMessagesMock).toHaveBeenCalledTimes(1);
+    expect(sendMSTeamsMessagesMock.mock.calls[0]?.[0].messages?.[0]?.text).toContain(
+      remainder.slice(0, 100),
+    );
     const emittedTexts = stream.emit.mock.calls.map(([activity]) =>
       typeof activity === "string" ? activity : activity.text,
     );
     const continuationTexts = emittedTexts.filter((text) => text?.includes("Response continued"));
-    expect(continuationTexts.length).toBeGreaterThan(1);
-    expect(continuationTexts.length).toBeLessThanOrEqual(5);
-    expect(continuationTexts[0]).toContain("Response continued 1/");
-    expect(continuationTexts.at(-1)).toContain("END OF FULL RESPONSE");
-    expect(continuationTexts.every((text) => (text?.length ?? 0) <= 2_400)).toBe(true);
-    expect(continuationTexts.join("\n")).toContain(remainder.slice(0, 100));
-    expect(continuationTexts.join("\n")).not.toMatch(/…|\.\.\.$|truncated/i);
+    expect(continuationTexts).toHaveLength(0);
   });
 
   it("settles delivery when sent-message ID observation throws", async () => {

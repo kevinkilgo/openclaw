@@ -175,21 +175,43 @@ export async function createMSTeamsIngressRetryCleanupDryRun(params: {
   const claims = await params.queue.listClaims();
   const staleClaims = claims
     .filter((claim) => claim.claim.claimedAt <= staleCutoff)
-    .map((claim) => ({
-      eventId: claim.id,
-      ...(claim.laneKey ? { laneKey: claim.laneKey } : {}),
-      ownerId: claim.claim.ownerId,
-      claimedAt: claim.claim.claimedAt,
-      ageMs: Math.max(0, now - claim.claim.claimedAt),
-    }));
+    .map((claim) => {
+      const staleClaim: {
+        eventId: string;
+        laneKey?: string;
+        ownerId: string;
+        claimedAt: number;
+        ageMs: number;
+      } = {
+        eventId: claim.id,
+        ownerId: claim.claim.ownerId,
+        claimedAt: claim.claim.claimedAt,
+        ageMs: Math.max(0, now - claim.claim.claimedAt),
+      };
+      if (claim.laneKey) {
+        staleClaim.laneKey = claim.laneKey;
+      }
+      return staleClaim;
+    });
   const failedRetries =
-    (await params.queue.listFailed?.({ limit: "all" }))?.map((record) => ({
-      eventId: record.id,
-      ...(record.laneKey ? { laneKey: record.laneKey } : {}),
-      reason: record.reason,
-      failedAt: record.failedAt,
-      ageMs: Math.max(0, now - record.failedAt),
-    })) ?? [];
+    (await params.queue.listFailed?.({ limit: "all" }))?.map((record) => {
+      const failedRetry: {
+        eventId: string;
+        laneKey?: string;
+        reason: string;
+        failedAt: number;
+        ageMs: number;
+      } = {
+        eventId: record.id,
+        reason: record.reason,
+        failedAt: record.failedAt,
+        ageMs: Math.max(0, now - record.failedAt),
+      };
+      if (record.laneKey) {
+        failedRetry.laneKey = record.laneKey;
+      }
+      return failedRetry;
+    }) ?? [];
 
   return {
     dryRun: true,
@@ -199,19 +221,40 @@ export async function createMSTeamsIngressRetryCleanupDryRun(params: {
     staleClaims,
     failedRetries,
     actions: [
-      ...staleClaims.map((claim) => ({
-        kind: "recover-stale-claim" as const,
-        eventId: claim.eventId,
-        ...(claim.laneKey ? { laneKey: claim.laneKey } : {}),
-        ageMs: claim.ageMs,
-      })),
-      ...failedRetries.map((record) => ({
-        kind: "review-failed-retry" as const,
-        eventId: record.eventId,
-        ...(record.laneKey ? { laneKey: record.laneKey } : {}),
-        ageMs: record.ageMs,
-        reason: record.reason,
-      })),
+      ...staleClaims.map((claim) => {
+        const action: {
+          kind: "recover-stale-claim";
+          eventId: string;
+          laneKey?: string;
+          ageMs: number;
+        } = {
+          kind: "recover-stale-claim" as const,
+          eventId: claim.eventId,
+          ageMs: claim.ageMs,
+        };
+        if (claim.laneKey) {
+          action.laneKey = claim.laneKey;
+        }
+        return action;
+      }),
+      ...failedRetries.map((record) => {
+        const action: {
+          kind: "review-failed-retry";
+          eventId: string;
+          laneKey?: string;
+          ageMs: number;
+          reason: string;
+        } = {
+          kind: "review-failed-retry" as const,
+          eventId: record.eventId,
+          ageMs: record.ageMs,
+          reason: record.reason,
+        };
+        if (record.laneKey) {
+          action.laneKey = record.laneKey;
+        }
+        return action;
+      }),
     ],
     approvalRequired: true,
     sideEffects: [],

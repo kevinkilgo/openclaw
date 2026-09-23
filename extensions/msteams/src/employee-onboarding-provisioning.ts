@@ -1,5 +1,6 @@
 // Msteams plugin module renders dry-run employee-agent provisioning plans.
 import { createHash } from "node:crypto";
+import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import type {
   MSTeamsEmployeeOnboardingRequest,
   MSTeamsEmployeeOnboardingRequestStore,
@@ -417,10 +418,6 @@ const EMPLOYEE_M365_PROMPT_SURFACE_CONFIG_GUARD = {
     explicitDisablePolicy: "block-and-report",
   },
 } satisfies MSTeamsEmployeeOnboardingProvisioningPlan["proposed"]["configGuard"];
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function configPluginEntries(config: unknown): Record<string, unknown> {
   if (!isRecord(config) || !isRecord(config.plugins) || !isRecord(config.plugins.entries)) {
@@ -1357,6 +1354,7 @@ function transitionPreconditionBlocker(params: {
         ? null
         : "Rolled-back transition requires rollback proof.";
   }
+  throw new Error(`Unsupported employee onboarding status: ${String(params.status)}`);
 }
 
 function createTransitionEvidence(params: {

@@ -4,8 +4,13 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 
-export const DEFAULT_TEAMS_ACTIVITY_BUDGET_BYTES = 80 * 1024;
-const DIGEST_SUMMARY_LIMIT = 1400;
+const DEFAULT_TEAMS_ACTIVITY_BUDGET_BYTES = 80 * 1024;
+export const DESKTOP_SAFE_TEXT_DIGEST_THRESHOLD_CHARS = 1200;
+const DIGEST_SUMMARY_LIMIT = 600;
+const DIGEST_TRUNCATED_MARKER = "[Preview truncated; open the full response for complete text]";
+const DEFAULT_ARTIFACT_DIR = "/shared/artifacts/msteams-responses";
+const ARTIFACT_BASE_URL_ENV = "OPENCLAW_MSTEAMS_ARTIFACT_BASE_URL";
+const ARTIFACT_DIR_ENV = "OPENCLAW_MSTEAMS_ARTIFACT_DIR";
 
 export type TeamsDeliveryBudgetMeasurement = {
   serialized: string;
@@ -18,6 +23,7 @@ export type TeamsDeliveryBudgetMeasurement = {
 export type TeamsDeliveryArtifact = {
   artifactId: string;
   artifactPath: string;
+  artifactUrl?: string;
   hash: string;
   runId: string;
   description: string;
@@ -38,7 +44,7 @@ export type TeamsBudgetedActivity =
       digestMeasurement: TeamsDeliveryBudgetMeasurement;
     };
 
-export function serializeTeamsActivity(activity: unknown): string {
+function serializeTeamsActivity(activity: unknown): string {
   return JSON.stringify(activity ?? null);
 }
 
@@ -59,7 +65,7 @@ export function measureTeamsActivity(
   };
 }
 
-export function isTeamsMessageSizeError(err: unknown): boolean {
+function isTeamsMessageSizeError(err: unknown): boolean {
   const direct = extractStatusCode(err);
   if (direct === 413) {
     return true;
@@ -72,18 +78,20 @@ export async function budgetTeamsActivity(params: {
   activity: Record<string, unknown>;
   budgetBytes?: number;
   artifactDir?: string;
+  artifactBaseUrl?: string;
   runId?: string;
   description?: string;
 }): Promise<TeamsBudgetedActivity> {
   const budgetBytes = params.budgetBytes ?? DEFAULT_TEAMS_ACTIVITY_BUDGET_BYTES;
   const originalMeasurement = measureTeamsActivity(params.activity, budgetBytes);
-  if (!originalMeasurement.overBudget) {
+  if (!originalMeasurement.overBudget && !isDesktopUnsafeLongText(params.activity)) {
     return { kind: "normal", activity: params.activity, measurement: originalMeasurement };
   }
 
   const envelope = await buildArtifactDigestActivity({
     activity: params.activity,
     artifactDir: params.artifactDir,
+    artifactBaseUrl: params.artifactBaseUrl,
     budgetBytes,
     runId: params.runId,
     description: params.description,
@@ -102,6 +110,7 @@ export async function sendTeamsActivityWithBudget<T>(params: {
   send: (activity: Record<string, unknown>) => Promise<T>;
   budgetBytes?: number;
   artifactDir?: string;
+  artifactBaseUrl?: string;
   runId?: string;
   description?: string;
 }): Promise<{ result: T; budgeted: TeamsBudgetedActivity; recoveredFromSizeError: boolean }> {
@@ -119,6 +128,7 @@ export async function sendTeamsActivityWithBudget<T>(params: {
     const fallback = await buildArtifactDigestActivity({
       activity: params.activity,
       artifactDir: params.artifactDir,
+      artifactBaseUrl: params.artifactBaseUrl,
       budgetBytes: params.budgetBytes ?? DEFAULT_TEAMS_ACTIVITY_BUDGET_BYTES,
       runId: params.runId,
       description: params.description,
@@ -142,6 +152,7 @@ export async function sendTeamsTurnActivityWithBudget<T>(params: {
   send: (activity: Record<string, unknown>) => Promise<T>;
   budgetBytes?: number;
   artifactDir?: string;
+  artifactBaseUrl?: string;
   runId?: string;
   description?: string;
 }): Promise<{ result: T; budgeted: TeamsBudgetedActivity; recoveredFromSizeError: boolean }> {
@@ -156,6 +167,7 @@ export async function updateTeamsTurnActivityWithBudget<T>(params: {
   update: (activity: Record<string, unknown>) => Promise<T>;
   budgetBytes?: number;
   artifactDir?: string;
+  artifactBaseUrl?: string;
   runId?: string;
   description?: string;
 }): Promise<T> {
@@ -163,6 +175,7 @@ export async function updateTeamsTurnActivityWithBudget<T>(params: {
     activity: normalizeTeamsActivityRecord(params.activity),
     budgetBytes: params.budgetBytes,
     artifactDir: params.artifactDir,
+    artifactBaseUrl: params.artifactBaseUrl,
     runId: params.runId,
     description: params.description,
   });
@@ -176,12 +189,13 @@ export function normalizeTeamsActivityRecord(activity: unknown): Record<string, 
   if (activity && typeof activity === "object" && !Array.isArray(activity)) {
     return activity as Record<string, unknown>;
   }
-  return { type: "message", text: activity == null ? "" : String(activity) };
+  return { type: "message", text: safeUnknownText(activity) };
 }
 
 async function buildArtifactDigestActivity(params: {
   activity: Record<string, unknown>;
   artifactDir?: string;
+  artifactBaseUrl?: string;
   budgetBytes: number;
   runId?: string;
   description?: string;
@@ -196,16 +210,19 @@ async function buildArtifactDigestActivity(params: {
     params.runId?.trim() || extractRunId(params.activity) || `msteams-run-${hash.slice(0, 12)}`;
   const artifactId = `${runId}-${hash.slice(0, 16)}.md`;
   const artifactDir =
-    params.artifactDir ??
-    process.env.OPENCLAW_MSTEAMS_ARTIFACT_DIR ??
-    join(process.cwd(), ".artifacts", "msteams-responses");
+    params.artifactDir ?? process.env[ARTIFACT_DIR_ENV]?.trim() ?? DEFAULT_ARTIFACT_DIR;
   await mkdir(artifactDir, { recursive: true });
   const artifactPath = join(artifactDir, artifactId);
   await writeFile(artifactPath, content, "utf8");
+  const artifactUrl = buildArtifactUrl({
+    artifactId,
+    baseUrl: params.artifactBaseUrl ?? process.env[ARTIFACT_BASE_URL_ENV],
+  });
 
   const artifact: TeamsDeliveryArtifact = {
     artifactId,
     artifactPath,
+    ...(artifactUrl ? { artifactUrl } : {}),
     hash,
     runId,
     description: params.description ?? describeActivity(params.activity),
@@ -225,26 +242,36 @@ function buildDigestActivity(params: {
   budgetBytes: number;
 }): Record<string, unknown> {
   const summary = summarizeContent(extractArtifactContent(params.source));
+  const openLine = params.artifact.artifactUrl
+    ? "Open the full response using the button below."
+    : "Full response is stored in the artifact store; an operator must provide an access link.";
   const base = {
     type: "message",
     text: [
-      "Full response stored as an artifact because the Teams payload exceeded the delivery budget.",
+      "Full response is available as an artifact because it is too long for reliable Teams desktop rendering.",
       "",
-      `Run id: ${params.artifact.runId}`,
-      `Artifact: ${params.artifact.artifactPath}`,
-      `Artifact id: ${params.artifact.artifactId}`,
-      `Content hash: sha256:${params.artifact.hash}`,
-      `Description: ${params.artifact.description}`,
+      openLine,
       "",
       "Summary:",
       summary,
     ].join("\n"),
+    ...(params.artifact.artifactUrl
+      ? {
+          attachments: [
+            {
+              contentType: "application/vnd.microsoft.card.adaptive",
+              content: buildOpenArtifactCard({ artifact: params.artifact, summary }),
+            },
+          ],
+        }
+      : {}),
     channelData: {
       ...(isRecord(params.source.channelData) ? params.source.channelData : {}),
       openclawDeliveryEnvelope: {
         runId: params.artifact.runId,
         artifactId: params.artifact.artifactId,
         artifactPath: params.artifact.artifactPath,
+        ...(params.artifact.artifactUrl ? { artifactUrl: params.artifact.artifactUrl } : {}),
         hash: `sha256:${params.artifact.hash}`,
         budgetBytes: params.budgetBytes,
       },
@@ -256,12 +283,61 @@ function buildDigestActivity(params: {
   return {
     ...base,
     text: [
-      "Full response stored as an artifact because the Teams payload exceeded the delivery budget.",
-      `Run id: ${params.artifact.runId}`,
-      `Artifact: ${params.artifact.artifactPath}`,
-      `Content hash: sha256:${params.artifact.hash}`,
-      "Summary: response omitted from Teams due to size; see artifact.",
+      "Full response is available as an artifact because it is too long for reliable Teams desktop rendering.",
+      params.artifact.artifactUrl
+        ? `Open full response: ${params.artifact.artifactUrl}`
+        : "Full response is stored in the artifact store; an operator must provide an access link.",
+      "Summary: response omitted from Teams due to size.",
     ].join("\n"),
+  };
+}
+
+function buildArtifactUrl(params: { baseUrl?: string; artifactId: string }): string | undefined {
+  const raw = params.baseUrl?.trim();
+  if (!raw) {
+    return undefined;
+  }
+  let base: URL;
+  try {
+    base = new URL(raw.endsWith("/") ? raw : `${raw}/`);
+  } catch {
+    return undefined;
+  }
+  if (base.protocol !== "https:" && base.protocol !== "http:") {
+    return undefined;
+  }
+  return new URL(encodeURIComponent(params.artifactId), base).href;
+}
+
+function buildOpenArtifactCard(params: {
+  artifact: TeamsDeliveryArtifact;
+  summary: string;
+}): Record<string, unknown> {
+  return {
+    type: "AdaptiveCard",
+    version: "1.4",
+    body: [
+      {
+        type: "TextBlock",
+        text: "Full response available",
+        weight: "Bolder",
+        wrap: true,
+      },
+      {
+        type: "TextBlock",
+        text: params.summary,
+        wrap: true,
+      },
+    ],
+    actions: params.artifact.artifactUrl
+      ? [
+          {
+            type: "Action.OpenUrl",
+            title: "Open full response",
+            url: params.artifact.artifactUrl,
+          },
+        ]
+      : [],
   };
 }
 
@@ -276,6 +352,16 @@ function extractArtifactContent(activity: Record<string, unknown>): string {
   return JSON.stringify(activity, null, 2);
 }
 
+function isDesktopUnsafeLongText(activity: Record<string, unknown>): boolean {
+  if (typeof activity.text !== "string") {
+    return false;
+  }
+  const attachments = Array.isArray(activity.attachments) ? activity.attachments : [];
+  return (
+    attachments.length === 0 && activity.text.length > DESKTOP_SAFE_TEXT_DIGEST_THRESHOLD_CHARS
+  );
+}
+
 function describeActivity(activity: Record<string, unknown>): string {
   if (typeof activity.text === "string" && activity.text.trim()) {
     return "Full Teams text response.";
@@ -284,7 +370,9 @@ function describeActivity(activity: Record<string, unknown>): string {
   if (
     attachments.some(
       (attachment) =>
-        isRecord(attachment) && String(attachment.contentType ?? "").includes("adaptive"),
+        isRecord(attachment) &&
+        typeof attachment.contentType === "string" &&
+        attachment.contentType.includes("adaptive"),
     )
   ) {
     return "Full Teams Adaptive Card payload.";
@@ -299,7 +387,7 @@ function summarizeContent(content: string): string {
     .filter(Boolean)
     .join("\n");
   return compact.length > DIGEST_SUMMARY_LIMIT
-    ? `${compact.slice(0, DIGEST_SUMMARY_LIMIT - 1).trimEnd()}...`
+    ? `${compact.slice(0, DIGEST_SUMMARY_LIMIT).trimEnd()}\n${DIGEST_TRUNCATED_MARKER}`
     : compact || "No text summary available; see artifact.";
 }
 
@@ -335,4 +423,24 @@ function extractStatusCode(err: unknown): number | null {
     return Number(responseStatus);
   }
   return null;
+}
+
+function safeUnknownText(value: unknown): string {
+  if (value == null) {
+    return "";
+  }
+  switch (typeof value) {
+    case "string":
+      return value;
+    case "number":
+    case "boolean":
+    case "bigint":
+      return String(value);
+    default:
+      try {
+        return JSON.stringify(value) ?? "";
+      } catch {
+        return "";
+      }
+  }
 }
