@@ -515,6 +515,12 @@ const config = {
     // Operator-facing Teams ingress cleanup is invoked through approval-gated
     // runbooks and direct dry-run checks, not through the normal plugin graph.
     "extensions/msteams/src/msteams-ingress.ts": ["exports", "types"],
+    // Graph dry-run builders and constants are tested as explicit delivery-lane
+    // contracts; production sends through the live wrapper in the same module.
+    "extensions/msteams/src/graph-message-send.ts": ["exports", "types"],
+    // Focused delivery-budget tests import this threshold to lock the desktop
+    // fallback boundary; production uses it internally.
+    "extensions/msteams/src/delivery-budget.ts": ["exports"],
     // Exported for employee auth remediation wiring and covered by focused tests.
     "extensions/msteams/src/monitor-handler/inbound-dispatch.ts": ["exports"],
     // Focused CLI tests exercise plan construction through this explicit test seam.

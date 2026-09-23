@@ -178,6 +178,7 @@ function prepareEmployeeCodexLoginConfig(params: {
   hostRoot: string;
   employeeAgentId: string;
 }): EmployeeContainerOpenClawConfig {
+  // SAFETY: structuredClone preserves the OpenClaw config object shape while isolating later rewrites.
   const cloned = structuredClone(params.cfg) as EmployeeContainerOpenClawConfig;
   cloned.agents = cloned.agents ?? {};
   cloned.agents.defaults = {

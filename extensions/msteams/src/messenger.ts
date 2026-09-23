@@ -150,8 +150,10 @@ function parseGraphNativeChatMap(value: string | undefined): Map<string, string>
     return out;
   }
   try {
+    // SAFETY: JSON.parse returns unknown; runtime shape guards below reject non-object maps.
     const parsed = JSON.parse(value) as unknown;
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      // SAFETY: The parsed object shape is validated entry-by-entry before use.
       for (const [conversationId, chatId] of Object.entries(parsed as Record<string, unknown>)) {
         if (typeof chatId === "string" && conversationId.trim() && chatId.trim()) {
           out.set(conversationId.trim(), chatId.trim());
@@ -196,6 +198,7 @@ async function readGraphNativeTokenFile(path: string | undefined): Promise<strin
     return undefined;
   }
   const raw = await readFile(path, "utf8");
+  // SAFETY: Token-file fields are read as optional strings and validated before return.
   const parsed = JSON.parse(raw) as GraphNativeTokenFile;
   const token = parsed.accessToken ?? parsed.access_token;
   return typeof token === "string" && token.trim() ? token.trim() : undefined;
@@ -363,6 +366,7 @@ export function renderReplyPayloadsToMessages(
   const tableMode =
     options.tableMode ??
     getMSTeamsRuntime().channel.text.resolveMarkdownTableMode({
+      // SAFETY: The runtime config object is the canonical OpenClaw config shape at this boundary.
       cfg: getMSTeamsRuntime().config.current() as OpenClawConfig,
       channel: "msteams",
     });
@@ -641,6 +645,7 @@ export async function sendMSTeamsMessages(params: {
       }
       throw error;
     }
+    // SAFETY: The adapter response shape is probed by optional fields and falls back to the raw response.
     const responseRecord = response as { delivered?: unknown; artifactMessageId?: string };
     const messageId = extractMessageId(responseRecord.delivered ?? response) ?? "unknown";
 

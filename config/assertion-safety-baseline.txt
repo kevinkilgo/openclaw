@@ -795,6 +795,7 @@ extensions/msteams/src/attachments/graph.ts	1
 extensions/msteams/src/attachments/shared.ts	2
 extensions/msteams/src/channel.ts	4
 extensions/msteams/src/delegated-state.ts	1
+extensions/msteams/src/delivery-budget.ts	1
 extensions/msteams/src/directory-live.ts	1
 extensions/msteams/src/errors.ts	2
 extensions/msteams/src/feedback-invoke.ts	2
@@ -802,9 +803,9 @@ extensions/msteams/src/file-consent.ts	1
 extensions/msteams/src/graph.ts	2
 extensions/msteams/src/inbound.ts	1
 extensions/msteams/src/media-helpers.ts	1
-extensions/msteams/src/messenger.ts	1
 extensions/msteams/src/monitor-handler.ts	5
 extensions/msteams/src/monitor-handler/inbound-content.ts	1
+extensions/msteams/src/monitor-handler/inbound-dispatch.ts	1
 extensions/msteams/src/monitor-handler/inbound-facts.ts	1
 extensions/msteams/src/monitor.ts	8
 extensions/msteams/src/msteams-ingress.ts	1
@@ -881,6 +882,7 @@ extensions/openai/openai-provider.ts	5
 extensions/openai/provider-policy-api.ts	2
 extensions/openai/realtime-provider-shared.ts	2
 extensions/openai/realtime-quicksilver-bridge.ts	1
+extensions/openai/realtime-quicksilver.ts	1
 extensions/openai/realtime-voice-bridge.ts	3
 extensions/openai/realtime-voice-session-policy.ts	4
 extensions/openai/speech-provider.ts	2
@@ -2522,7 +2524,7 @@ src/config/plugins-allowlist.ts	1
 src/config/redact-snapshot.ts	4
 src/config/runtime-overrides.ts	2
 src/config/runtime-snapshot.ts	1
-src/config/runtime-source-projection.ts	3
+src/config/runtime-source-projection.ts	4
 src/config/schema.ts	1
 src/config/sessions/archive-compression.ts	1
 src/config/sessions/cleanup-service.ts	3
