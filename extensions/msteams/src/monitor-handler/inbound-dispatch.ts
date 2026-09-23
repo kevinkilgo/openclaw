@@ -178,8 +178,7 @@ function prepareEmployeeCodexLoginConfig(params: {
   hostRoot: string;
   employeeAgentId: string;
 }): EmployeeContainerOpenClawConfig {
-  // SAFETY: JSON round-trip deep-clones the OpenClaw config shape before rewriting known agent workspace fields.
-  const cloned = JSON.parse(JSON.stringify(params.cfg)) as EmployeeContainerOpenClawConfig; // SAFETY: JSON round-trip deep-clones the OpenClaw config shape before rewriting known agent workspace fields.
+  const cloned = structuredClone(params.cfg) as EmployeeContainerOpenClawConfig;
   cloned.agents = cloned.agents ?? {};
   cloned.agents.defaults = {
     ...cloned.agents.defaults,

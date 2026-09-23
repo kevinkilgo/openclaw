@@ -1354,6 +1354,7 @@ function transitionPreconditionBlocker(params: {
         ? null
         : "Rolled-back transition requires rollback proof.";
   }
+  throw new Error(`Unsupported employee onboarding status: ${String(params.status)}`);
 }
 
 function createTransitionEvidence(params: {

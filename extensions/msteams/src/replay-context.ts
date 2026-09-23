@@ -76,9 +76,9 @@ export function createMSTeamsReplayContext(
       return results;
     },
     updateActivity: async (outbound) => {
-      const activity = normalizeTeamsActivityRecord(outbound);
+      const normalizedActivity = normalizeTeamsActivityRecord(outbound);
       const result = await updateTeamsTurnActivityWithBudget({
-        activity,
+        activity: normalizedActivity,
         update: async (budgetedActivity) =>
           await updateMSTeamsActivityWithReference(
             app,

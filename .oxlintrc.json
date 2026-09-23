@@ -396,6 +396,31 @@
     },
     {
       "files": [
+        "extensions/msteams/src/employee-onboarding-provisioning.ts",
+        "extensions/msteams/src/monitor-handler/inbound-dispatch.ts"
+      ],
+      "rules": {
+        "max-lines": ["error", { "max": 1500, "skipBlankLines": true, "skipComments": true }]
+      }
+    },
+    {
+      "files": [
+        "extensions/msteams/src/employee-onboarding-provisioning.test.ts",
+        "extensions/msteams/src/monitor-handler/message-handler.authz.test.ts",
+        "extensions/msteams/src/reply-dispatcher.test.ts"
+      ],
+      "rules": {
+        "max-lines": ["error", { "max": 1300, "skipBlankLines": true, "skipComments": true }]
+      }
+    },
+    {
+      "files": ["extensions/msteams/src/reply-dispatcher.ts"],
+      "rules": {
+        "max-lines": ["error", { "max": 850, "skipBlankLines": true, "skipComments": true }]
+      }
+    },
+    {
+      "files": [
         "src/agents/control/agent-control.ts",
         "src/commands/doctor-config-preflight.ts"
       ],

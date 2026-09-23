@@ -277,7 +277,9 @@ function extractVisibleAttachmentText(attachments: unknown): string {
       }
       return body.map((block) =>
         block && typeof block === "object" && !Array.isArray(block)
-          ? String((block as { text?: unknown }).text ?? "")
+          ? typeof (block as { text?: unknown }).text === "string"
+            ? (block as { text: string }).text
+            : ""
           : "",
       );
     })

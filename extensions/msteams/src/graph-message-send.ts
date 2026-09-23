@@ -158,7 +158,6 @@ export function buildGraphNativeTextRequestDescriptors(
   });
   return chunks.map((chunk, index) => {
     const body = graphNativeTextBody(contentType, chunk);
-    const endpoint = graphNativeTextEndpoint(params.route);
     return {
       method: "POST",
       url: `https://graph.microsoft.com/v1.0${endpoint}`,
@@ -249,6 +248,7 @@ export function graphNativeTextEndpoint(route: GraphNativeTextRoute): string {
         route.channelId,
       )}/messages/${encodeURIComponent(route.messageId)}/replies`;
   }
+  throw new Error(`Unsupported Graph native text route: ${JSON.stringify(route)}`);
 }
 
 function assertNativeTextOnly(params: BuildGraphNativeTextDryRunParams): void {

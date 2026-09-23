@@ -1,6 +1,7 @@
 // Msteams tests cover Graph native text send spike descriptors.
 import { describe, expect, it, vi } from "vitest";
 import {
+  buildGraphNativeTextSendRequest,
   buildGraphNativeTextRequestDescriptors,
   buildGraphNativeTextDryRunManifest,
   graphNativeTextEndpoint,
@@ -51,7 +52,7 @@ describe("graphNativeTextEndpoint", () => {
 
 describe("buildGraphNativeTextRequestDescriptors", () => {
   it("builds native text body descriptors only", () => {
-    const [request] = buildGraphNativeTextRequestDescriptors({
+    const request = buildGraphNativeTextSendRequest({
       route: CHAT_ROUTE,
       text: "hello Graph",
     });

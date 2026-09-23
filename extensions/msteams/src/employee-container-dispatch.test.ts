@@ -557,12 +557,13 @@ describe("msteams employee container dispatch", () => {
           await new Promise((_resolve, reject) => {
             opts.signal?.addEventListener(
               "abort",
-              () =>
-                reject(
+              () => {
+                const reason =
                   opts.signal?.reason instanceof Error
                     ? opts.signal.reason
-                    : new Error("OpenAI device-code sign-in expired"),
-                ),
+                    : new Error("OpenAI device-code sign-in expired");
+                reject(reason);
+              },
               { once: true },
             );
           });

@@ -189,7 +189,7 @@ export function normalizeTeamsActivityRecord(activity: unknown): Record<string, 
   if (activity && typeof activity === "object" && !Array.isArray(activity)) {
     return activity as Record<string, unknown>;
   }
-  return { type: "message", text: activity == null ? "" : String(activity) };
+  return { type: "message", text: safeUnknownText(activity) };
 }
 
 async function buildArtifactDigestActivity(params: {
@@ -370,7 +370,9 @@ function describeActivity(activity: Record<string, unknown>): string {
   if (
     attachments.some(
       (attachment) =>
-        isRecord(attachment) && String(attachment.contentType ?? "").includes("adaptive"),
+        isRecord(attachment) &&
+        typeof attachment.contentType === "string" &&
+        attachment.contentType.includes("adaptive"),
     )
   ) {
     return "Full Teams Adaptive Card payload.";
@@ -421,4 +423,24 @@ function extractStatusCode(err: unknown): number | null {
     return Number(responseStatus);
   }
   return null;
+}
+
+function safeUnknownText(value: unknown): string {
+  if (value == null) {
+    return "";
+  }
+  switch (typeof value) {
+    case "string":
+      return value;
+    case "number":
+    case "boolean":
+    case "bigint":
+      return String(value);
+    default:
+      try {
+        return JSON.stringify(value) ?? "";
+      } catch {
+        return "";
+      }
+  }
 }

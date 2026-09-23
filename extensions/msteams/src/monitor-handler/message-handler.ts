@@ -40,7 +40,9 @@ import { prepareMSTeamsThreadRouting, resolveMSTeamsThreadContext } from "./thre
 const EMPLOYEE_ONBOARDING_ROUTE_POLL_MS = 1_000;
 
 function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 export function createMSTeamsMessageHandler(deps: MSTeamsMessageHandlerDeps) {
@@ -255,7 +257,7 @@ export function createMSTeamsMessageHandler(deps: MSTeamsMessageHandlerDeps) {
     if (employeeOnboardingDecision.kind === "pending-onboarding") {
       let persisted = false;
       let persistenceAttempted = false;
-      let terminalStatusGuard = false;
+      let terminalStatusGuard: boolean;
       try {
         persistenceAttempted = Boolean(deps.employeeOnboardingStore);
         const result = deps.employeeOnboardingStore
