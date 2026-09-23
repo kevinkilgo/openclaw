@@ -524,6 +524,60 @@ describe("oxlint config", () => {
           "max-lines": ["error", { max: 1200, skipBlankLines: true, skipComments: true }],
         },
       },
+      {
+        files: [
+          "extensions/msteams/src/employee-onboarding-provisioning.ts",
+          "extensions/msteams/src/monitor-handler/inbound-dispatch.ts",
+        ],
+        rules: {
+          "max-lines": ["error", { max: 1500, skipBlankLines: true, skipComments: true }],
+        },
+      },
+      {
+        files: [
+          "extensions/msteams/src/employee-onboarding-provisioning.test.ts",
+          "extensions/msteams/src/monitor-handler/message-handler.authz.test.ts",
+          "extensions/msteams/src/reply-dispatcher.test.ts",
+        ],
+        rules: {
+          "max-lines": ["error", { max: 1300, skipBlankLines: true, skipComments: true }],
+        },
+      },
+      {
+        files: ["extensions/msteams/src/reply-dispatcher.ts"],
+        rules: {
+          "max-lines": ["error", { max: 850, skipBlankLines: true, skipComments: true }],
+        },
+      },
+      {
+        files: [
+          "extensions/workboard/browser/lib/workboard/index.test.ts",
+          "extensions/workboard/browser/pages/workboard/view.test.ts",
+        ],
+        rules: {
+          "max-lines": ["error", { max: 5000, skipBlankLines: true, skipComments: true }],
+        },
+      },
+      {
+        files: [
+          "src/agents/control/agent-control.ts",
+          "src/commands/doctor-config-preflight.ts",
+          "src/state/openclaw-database-preflight.ts",
+        ],
+        rules: {
+          "max-lines": ["error", { max: 1900, skipBlankLines: true, skipComments: true }],
+        },
+      },
+      {
+        files: [
+          "src/agents/control/agent-control.test.ts",
+          "src/commands/doctor-config-preflight.state-migration.test.ts",
+          "src/state/openclaw-database-preflight.test.ts",
+        ],
+        rules: {
+          "max-lines": ["error", { max: 1400, skipBlankLines: true, skipComments: true }],
+        },
+      },
     ]);
   });
 
