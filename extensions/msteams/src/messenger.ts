@@ -1,5 +1,6 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { PlatformMessageNotDispatchedError } from "openclaw/plugin-sdk/error-runtime";
+import { isFutureDateTimestampMs } from "openclaw/plugin-sdk/number-runtime";
 // Msteams plugin module implements messenger behavior.
 import {
   isSilentReplyText,
@@ -37,6 +38,7 @@ import {
 } from "./graph-upload.js";
 import { extractFilename, extractMessageId, getMimeType, isLocalPath } from "./media-helpers.js";
 import { buildMSTeamsMessageActivity } from "./message-activity.js";
+import { refreshMSTeamsDelegatedTokens } from "./oauth.token.js";
 import { setPendingUploadActivityId } from "./pending-uploads.js";
 import { withRevokedProxyFallback } from "./revoked-context.js";
 import { getMSTeamsRuntime } from "./runtime.js";
@@ -123,6 +125,12 @@ type GraphNativeLongTextSettings = {
 type GraphNativeTokenFile = {
   accessToken?: string;
   access_token?: string;
+  expiresAt?: number;
+  expires_at?: number;
+  refreshToken?: string;
+  refresh_token?: string;
+  scope?: string;
+  scopes?: string[];
 };
 
 function envFlagEnabled(value: string | undefined): boolean {
@@ -193,7 +201,33 @@ function resolveGraphNativeLongTextSettings(env = process.env): GraphNativeLongT
   };
 }
 
-async function readGraphNativeTokenFile(path: string | undefined): Promise<string | undefined> {
+function resolveGraphNativeTokenFileExpiresAtMs(parsed: GraphNativeTokenFile): number | undefined {
+  const expiresAt = parsed.expiresAt;
+  if (Number.isFinite(expiresAt)) {
+    return expiresAt;
+  }
+  const expiresAtSeconds = parsed.expires_at;
+  if (Number.isFinite(expiresAtSeconds)) {
+    return expiresAtSeconds * 1000;
+  }
+  return undefined;
+}
+
+function resolveGraphNativeTokenFileScopes(parsed: GraphNativeTokenFile): string[] | undefined {
+  if (Array.isArray(parsed.scopes) && parsed.scopes.every((scope) => typeof scope === "string")) {
+    return parsed.scopes;
+  }
+  if (typeof parsed.scope === "string" && parsed.scope.trim()) {
+    return parsed.scope.split(/\s+/u).filter(Boolean);
+  }
+  return undefined;
+}
+
+async function readGraphNativeTokenFile(params: {
+  path: string | undefined;
+  credentials?: Extract<ReturnType<typeof resolveMSTeamsCredentials>, { type: "secret" }>;
+}): Promise<string | undefined> {
+  const path = params.path;
   if (!path) {
     return undefined;
   }
@@ -201,7 +235,36 @@ async function readGraphNativeTokenFile(path: string | undefined): Promise<strin
   // SAFETY: Token-file fields are read as optional strings and validated before return.
   const parsed = JSON.parse(raw) as GraphNativeTokenFile;
   const token = parsed.accessToken ?? parsed.access_token;
-  return typeof token === "string" && token.trim() ? token.trim() : undefined;
+  const expiresAtMs = resolveGraphNativeTokenFileExpiresAtMs(parsed);
+  if (typeof token === "string" && token.trim() && isFutureDateTimestampMs(expiresAtMs)) {
+    return token.trim();
+  }
+
+  const refreshToken = parsed.refreshToken ?? parsed.refresh_token;
+  if (!params.credentials || typeof refreshToken !== "string" || !refreshToken.trim()) {
+    return typeof token === "string" && token.trim() ? token.trim() : undefined;
+  }
+
+  const refreshed = await refreshMSTeamsDelegatedTokens({
+    tenantId: params.credentials.tenantId,
+    clientId: params.credentials.appId,
+    clientSecret: params.credentials.appPassword,
+    refreshToken: refreshToken.trim(),
+    scopes: resolveGraphNativeTokenFileScopes(parsed),
+  });
+  const nextPayload = {
+    ...parsed,
+    accessToken: refreshed.accessToken,
+    access_token: refreshed.accessToken,
+    refreshToken: refreshed.refreshToken,
+    refresh_token: refreshed.refreshToken,
+    expiresAt: refreshed.expiresAt,
+    expires_at: Math.floor(refreshed.expiresAt / 1000),
+    scope: refreshed.scopes.join(" "),
+    scopes: refreshed.scopes,
+  };
+  await writeFile(path, `${JSON.stringify(nextPayload, null, 2)}\n`, "utf8");
+  return refreshed.accessToken;
 }
 
 async function resolveGraphNativeDelegatedToken(params: {
@@ -209,6 +272,15 @@ async function resolveGraphNativeDelegatedToken(params: {
   settings: GraphNativeLongTextSettings;
 }): Promise<string | undefined> {
   const creds = resolveMSTeamsCredentials(params.msteamsConfig);
+  if (params.settings.tokenFile) {
+    const token = await readGraphNativeTokenFile({
+      path: params.settings.tokenFile,
+      credentials: creds?.type === "secret" ? creds : undefined,
+    });
+    if (token) {
+      return token;
+    }
+  }
   if (creds?.type === "secret") {
     const token = await resolveDelegatedAccessToken({
       tenantId: creds.tenantId,
@@ -219,7 +291,7 @@ async function resolveGraphNativeDelegatedToken(params: {
       return token;
     }
   }
-  return await readGraphNativeTokenFile(params.settings.tokenFile);
+  return undefined;
 }
 
 function shouldUseGraphNativeLongText(params: {
