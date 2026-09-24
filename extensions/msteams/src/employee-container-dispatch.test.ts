@@ -250,7 +250,7 @@ describe("msteams employee container dispatch", () => {
     expect(replyDispatcherMockState.settle).toHaveBeenCalledTimes(1);
   });
 
-  it("defaults Teams employee dispatch waits to the simple-turn SLA", async () => {
+  it("defaults Teams employee dispatch waits to the long-running turn SLA", async () => {
     const cfg = createDefaultWaitConfig();
     const runtime = { error: vi.fn() } as unknown as RuntimeEnv;
     const deps = createMSTeamsMessageHandlerDeps({ cfg, runtime });
@@ -264,10 +264,10 @@ describe("msteams employee container dispatch", () => {
       {
         url: "ws://employee-agent-kkilgo:18789",
         token: "test-token",
-        timeout: "60000",
+        timeout: "300000",
       },
       expect.objectContaining({
-        timeout: 60,
+        timeout: 300,
       }),
       { clientName: "gateway-client", mode: "backend", scopes: ["operator.write"] },
     );
@@ -277,9 +277,9 @@ describe("msteams employee container dispatch", () => {
       {
         url: "ws://employee-agent-kkilgo:18789",
         token: "test-token",
-        timeout: "70000",
+        timeout: "310000",
       },
-      { runId: "run-1", timeoutMs: 60000 },
+      { runId: "run-1", timeoutMs: 300000 },
       { clientName: "gateway-client", mode: "backend", scopes: ["operator.write"] },
     );
     expect(deps.log.info).toHaveBeenCalledWith(
@@ -306,14 +306,14 @@ describe("msteams employee container dispatch", () => {
     const handler = createMSTeamsMessageHandler(deps);
 
     await expect(handler(createContext())).rejects.toThrow(
-      "employee comms connector/tool startup timeout after 60000ms",
+      "employee comms connector/tool startup timeout after 300000ms",
     );
 
     expect(gatewayRuntimeMockState.callGatewayFromCli).toHaveBeenNthCalledWith(
       2,
       "agent.wait",
-      expect.objectContaining({ timeout: "70000" }),
-      { runId: "run-slow-connectors", timeoutMs: 60000 },
+      expect.objectContaining({ timeout: "310000" }),
+      { runId: "run-slow-connectors", timeoutMs: 300000 },
       { clientName: "gateway-client", mode: "backend", scopes: ["operator.write"] },
     );
     expect(deps.log.info).toHaveBeenCalledWith(
@@ -326,7 +326,7 @@ describe("msteams employee container dispatch", () => {
       }),
     );
     expect(runtime.error).toHaveBeenCalledWith(
-      expect.stringContaining("connector/tool startup timeout after 60000ms"),
+      expect.stringContaining("connector/tool startup timeout after 300000ms"),
     );
     expect(replyDispatcherMockState.deliver).toHaveBeenCalledWith(
       {

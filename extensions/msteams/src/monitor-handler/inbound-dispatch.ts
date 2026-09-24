@@ -68,7 +68,7 @@ type GatewayAgentWaitResult = {
 
 const EMPLOYEE_CONTAINER_SESSION_CLAIM_RETRY_ATTEMPTS = 3;
 const EMPLOYEE_CONTAINER_SESSION_CLAIM_RETRY_DELAY_MS = 1_000;
-const EMPLOYEE_CONTAINER_DEFAULT_WAIT_TIMEOUT_MS = 60_000;
+const EMPLOYEE_CONTAINER_DEFAULT_WAIT_TIMEOUT_MS = 300_000;
 const EMPLOYEE_CONTAINER_TYPING_KEEPALIVE_INTERVAL_MS = 8_000;
 const EMPLOYEE_CONTAINER_FAILURE_UPDATE_TEXT =
   "I hit an issue before I could finish that request. I've logged it and we're working on the fix; I'll notify you when it's ready to retry.";
