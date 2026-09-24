@@ -255,6 +255,28 @@ describe("refreshMSTeamsDelegatedTokens", () => {
     expect(body.get("client_secret")).toBe("secret-1");
   });
 
+  it("refreshes public-client delegated tokens without client_secret", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      responseJson({
+        access_token: "new-at",
+        expires_in: 3600,
+      }),
+    );
+
+    await refreshMSTeamsDelegatedTokens({
+      tenantId: "t",
+      clientId: "public-client",
+      refreshToken: "public-rt",
+    });
+
+    const [, init] = firstFetchCall(fetchSpy);
+    const body = new URLSearchParams(init.body as string);
+    expect(body.get("client_id")).toBe("public-client");
+    expect(body.get("grant_type")).toBe("refresh_token");
+    expect(body.get("refresh_token")).toBe("public-rt");
+    expect(body.has("client_secret")).toBe(false);
+  });
+
   it("uses new refresh token when Azure returns one", async () => {
     fetchSpy.mockResolvedValueOnce(
       responseJson({

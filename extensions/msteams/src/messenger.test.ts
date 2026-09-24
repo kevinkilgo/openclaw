@@ -442,7 +442,6 @@ describe("msteams messenger", () => {
         expect(oauthTokenMockState.refreshMSTeamsDelegatedTokens).toHaveBeenCalledWith({
           tenantId: "tenant-id",
           clientId: "client-id",
-          clientSecret: "client-secret",
           refreshToken: "refresh-token",
           scopes: ["ChatMessage.Send", "User.Read"],
         });

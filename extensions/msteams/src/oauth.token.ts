@@ -24,17 +24,20 @@ type MSTeamsTokenResponse = {
 
 function createMSTeamsTokenBody(params: {
   clientId: string;
-  clientSecret: string;
+  clientSecret?: string;
   grantType: string;
   scopes: readonly string[];
   values?: Record<string, string>;
 }): URLSearchParams {
   const body = new URLSearchParams({
     client_id: params.clientId,
-    client_secret: params.clientSecret,
     grant_type: params.grantType,
     scope: [...params.scopes].join(" "),
   });
+
+  if (params.clientSecret) {
+    body.set("client_secret", params.clientSecret);
+  }
 
   for (const [key, value] of Object.entries(params.values ?? {})) {
     body.set(key, value);
@@ -185,7 +188,7 @@ export async function exchangeMSTeamsCodeForTokens(params: {
 export async function refreshMSTeamsDelegatedTokens(params: {
   tenantId: string;
   clientId: string;
-  clientSecret: string;
+  clientSecret?: string;
   refreshToken: string;
   scopes?: readonly string[];
 }): Promise<MSTeamsDelegatedTokens> {

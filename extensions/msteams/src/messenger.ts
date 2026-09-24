@@ -248,7 +248,6 @@ async function readGraphNativeTokenFile(params: {
   const refreshed = await refreshMSTeamsDelegatedTokens({
     tenantId: params.credentials.tenantId,
     clientId: params.credentials.appId,
-    clientSecret: params.credentials.appPassword,
     refreshToken: refreshToken.trim(),
     scopes: resolveGraphNativeTokenFileScopes(parsed),
   });
