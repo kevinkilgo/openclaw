@@ -50,7 +50,7 @@ export function buildMSTeamsHardRulesDeliveryEvidence(params: {
   const plan = planTeamsTextWindowChunks(params.sourceText);
   const messageIds = params.messageIds.filter((id) => id.trim() && id !== "unknown");
   const sentChunkTexts = params.sentChunkTexts ?? plan.chunks.map((chunk) => chunk.text);
-  const chunks = plan.chunks.map((chunk, index) => {
+  const chunks: MSTeamsHardRulesDeliveryEvidence["chunks"] = plan.chunks.map((chunk, index) => {
     const messageId = messageIds[index] ?? "missing";
     const reconstructedBody =
       sentChunkTexts[index] !== undefined
