@@ -4,6 +4,7 @@ import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { createReplyDispatcher } from "openclaw/plugin-sdk/reply-runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReplyPayload } from "../runtime-api.js";
+import type { MSTeamsHardRulesDeliveryEvidence } from "./hard-rules-evidence.js";
 
 const createChannelMessageReplyPipelineMock = vi.hoisted(() => vi.fn());
 const getMSTeamsRuntimeMock = vi.hoisted(() => vi.fn());
@@ -96,6 +97,7 @@ function createStreamMock(): StreamMock {
 }
 
 import { createMSTeamsReplyDispatcher } from "./reply-dispatcher.js";
+import { planTeamsTextWindowChunks } from "./text-window-planner.js";
 
 describe("createMSTeamsReplyDispatcher", () => {
   let typingCallbacks: {
@@ -147,7 +149,10 @@ describe("createMSTeamsReplyDispatcher", () => {
   function createDispatcher(
     conversationType = "personal",
     msteamsConfig: Record<string, unknown> = {},
-    extraParams: { onSentMessageIds?: (ids: string[]) => void } = {},
+    extraParams: {
+      onSentMessageIds?: (ids: string[]) => void;
+      onHardRulesDeliveryEvidence?: (evidence: MSTeamsHardRulesDeliveryEvidence) => void;
+    } = {},
   ) {
     const contextSendActivity = vi.fn(async () => ({ id: "activity-1" }));
     lastContextSendActivity = contextSendActivity;
@@ -893,6 +898,39 @@ describe("createMSTeamsReplyDispatcher", () => {
     expect(enqueueSystemEventMock).not.toHaveBeenCalled();
   });
 
+  it("preserves accepted text-window ids when a later internal chunk fails", async () => {
+    const onSentMessageIds = vi.fn();
+    const longReply = "partial text-window dispatcher evidence ".repeat(120);
+    renderReplyPayloadsToMessagesMock.mockReturnValue([{ text: longReply }] as never);
+    const partialError = Object.assign(new Error("MessageSizeTooBig"), {
+      deliveredMessageIds: ["chunk-1"],
+      sentChunkTexts: ["Part 1/3\n\npartial text-window dispatcher evidence"],
+    });
+    sendMSTeamsMessagesMock.mockRejectedValueOnce(partialError);
+
+    const dispatcher = createDispatcher(
+      "personal",
+      { streaming: { block: { enabled: false } } },
+      { onSentMessageIds },
+    );
+    const options = dispatcherOptions();
+
+    const result = await options.deliver({ text: longReply });
+    const finalization = expect(result?.finalization).rejects.toMatchObject({
+      code: "CHANNEL_PARTIAL_DELIVERY",
+      deliveryResult: {
+        visibleReplySent: true,
+        messageIds: ["chunk-1"],
+        content: longReply,
+      },
+    });
+    await dispatcher.dispatcherOptions.onSettled?.();
+    await finalization;
+
+    expect(onSentMessageIds).toHaveBeenCalledWith(["chunk-1"]);
+    expect(enqueueSystemEventMock).toHaveBeenCalledTimes(1);
+  });
+
   it("returns queued delivery identity only after the provider send runs", async () => {
     renderReplyPayloadsToMessagesMock.mockReturnValue([{ text: "hello" }] as never);
     sendMSTeamsMessagesMock.mockResolvedValue(["id-1"] as never);
@@ -950,6 +988,91 @@ describe("createMSTeamsReplyDispatcher", () => {
       messageIds: ["stream-final"],
       content: "streamed final",
     });
+  });
+
+  it("keeps long progress finals on native Teams delivery for every continuation chunk", async () => {
+    const evidence: MSTeamsHardRulesDeliveryEvidence[] = [];
+    const onSentMessageIds = vi.fn();
+    const longReply = [
+      "Graph-native sticky delivery proof.",
+      "This answer is intentionally long enough to require ordered chunks.",
+      "Every continuation must stay on the same native Teams surface.",
+    ]
+      .join(" ")
+      .repeat(70);
+    const plan = planTeamsTextWindowChunks(longReply);
+    expect(plan.chunks.length).toBeGreaterThan(1);
+    const nativeIds = plan.chunks.map((chunk) => `native-${chunk.index}`);
+    const dispatcher = createDispatcher(
+      "personal",
+      { streaming: { mode: "progress" } },
+      {
+        onSentMessageIds,
+        onHardRulesDeliveryEvidence: (entry) => evidence.push(entry),
+      },
+    );
+    const stream = getStreamMock();
+    stream.close.mockReset();
+    for (const id of nativeIds) {
+      stream.close.mockResolvedValueOnce({ id });
+    }
+
+    const result = await dispatcher.delivery.deliver({ text: longReply }, { kind: "final" });
+    await dispatcher.dispatcherOptions.onSettled?.();
+
+    await expect(result?.finalization).resolves.toMatchObject({
+      visibleReplySent: true,
+      messageIds: nativeIds,
+      content: longReply,
+    });
+    expect(sendMSTeamsMessagesMock).not.toHaveBeenCalled();
+    expect(renderReplyPayloadsToMessagesMock).not.toHaveBeenCalled();
+    expect(stream.close).toHaveBeenCalledTimes(plan.chunks.length);
+    expect(onSentMessageIds.mock.calls.map(([ids]) => ids).flat()).toEqual([
+      ...nativeIds.slice(1),
+      nativeIds[0],
+    ]);
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]).toMatchObject({
+      chunkCount: plan.chunks.length,
+      messageIds: nativeIds,
+      hashesMatch: true,
+      nativeTextChunksOnly: true,
+      defaultArtifactRouteObserved: false,
+      deliverySuccess: true,
+    });
+    expect(evidence[0]!.chunks.map((chunk) => chunk.deliveryStatus)).toEqual(
+      plan.chunks.map(() => "delivered"),
+    );
+  });
+
+  it("rejects native-selected long continuations instead of using block/card fallback", async () => {
+    renderReplyPayloadsToMessagesMock.mockImplementation((payloads) =>
+      payloads.flatMap((payload) => (payload.text ? [{ text: payload.text }] : [])),
+    );
+    sendMSTeamsMessagesMock.mockResolvedValue(["block-fallback"]);
+    const longReply = "Native continuation failure must not mix Teams surfaces. ".repeat(150);
+    const plan = planTeamsTextWindowChunks(longReply);
+    expect(plan.chunks.length).toBeGreaterThan(1);
+    const dispatcher = createDispatcher("personal", { streaming: { mode: "progress" } });
+    const stream = getStreamMock();
+    stream.close.mockReset();
+    stream.close.mockResolvedValueOnce({ id: "native-1" });
+    stream.close.mockResolvedValueOnce(undefined);
+
+    const result = await dispatcher.delivery.deliver({ text: longReply }, { kind: "final" });
+    await dispatcher.dispatcherOptions.onSettled?.();
+
+    await expect(result?.finalization).rejects.toMatchObject({
+      code: "CHANNEL_PARTIAL_DELIVERY",
+      deliveryResult: {
+        visibleReplySent: true,
+        messageIds: ["native-1"],
+        content: expect.stringContaining("Part 1/"),
+      },
+    });
+    expect(sendMSTeamsMessagesMock).not.toHaveBeenCalled();
+    expect(renderReplyPayloadsToMessagesMock).not.toHaveBeenCalled();
   });
 
   it("preserves both progress finals through real dispatcher settlement", async () => {
@@ -1199,18 +1322,87 @@ describe("createMSTeamsReplyDispatcher", () => {
     expect(emittedTexts.join("\n")).not.toContain("END OF FULL RESPONSE");
   });
 
-  it("routes long post-native progress remainders through Teams message delivery", async () => {
+  it("records hard-rules delivery evidence for ordinary long block replies", async () => {
+    registerHooks("message_sending");
     renderReplyPayloadsToMessagesMock.mockImplementation((payloads) =>
       payloads.flatMap((payload) =>
         typeof payload.text === "string" && payload.text ? [{ text: payload.text }] : [],
       ),
     );
-    sendMSTeamsMessagesMock.mockResolvedValue(["post-native-digest-id"] as never);
+    const deliveredIds = Array.from({ length: 4 }, (_, index) => `chunk-id-${index + 1}`);
+    sendMSTeamsMessagesMock.mockResolvedValue(deliveredIds as never);
+    const onHardRulesDeliveryEvidence = vi.fn();
+    const dispatcher = createDispatcher(
+      "groupchat",
+      { streaming: { block: { enabled: false } } },
+      { onHardRulesDeliveryEvidence },
+    );
+    const longReply = "Controlled ordinary employee route native text evidence. ".repeat(70);
+
+    const result = await dispatcher.delivery.deliver({ text: longReply }, { kind: "final" });
+    await dispatcher.dispatcherOptions.onSettled?.();
+
+    await expect(result?.finalization).resolves.toEqual({
+      visibleReplySent: true,
+      messageIds: deliveredIds,
+      content: longReply,
+    });
+    expect(onHardRulesDeliveryEvidence).toHaveBeenCalledTimes(1);
+    expect(onHardRulesDeliveryEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "msteams-hard-rules-delivery-evidence",
+        route: "ordinary-employee",
+        conversationId: "conv",
+        conversationType: "groupchat",
+        messageIds: deliveredIds,
+        chunkCount: deliveredIds.length,
+        hashesMatch: true,
+        nativeTextChunksOnly: true,
+        defaultArtifactRouteObserved: false,
+        deliverySuccess: true,
+      }),
+    );
+    const evidence = onHardRulesDeliveryEvidence.mock
+      .calls[0]?.[0] as MSTeamsHardRulesDeliveryEvidence;
+    expect(evidence.chunks).toHaveLength(deliveredIds.length);
+    expect(evidence.chunks.map((chunk) => chunk.index)).toEqual([1, 2, 3, 4]);
+    expect(evidence.chunks.map((chunk) => chunk.messageId)).toEqual(deliveredIds);
+    expect(evidence.chunks.every((chunk) => chunk.deliveryStatus === "delivered")).toBe(true);
+    expect(evidence.chunks.every((chunk) => /^[a-f0-9]{64}$/u.test(chunk.payloadHash))).toBe(true);
+    expect(evidence.chunks.every((chunk) => /^[a-f0-9]{64}$/u.test(chunk.reconstructedHash))).toBe(
+      true,
+    );
+    expect(evidence.chunks.every((chunk) => chunk.budgetBytes <= 80 * 1024)).toBe(true);
+    expect(evidence.chunks.every((chunk) => chunk.jsonUtf8Bytes < 80 * 1024)).toBe(true);
+    expect(evidence.chunks.every((chunk) => chunk.jsonUtf16Bytes < 80 * 1024)).toBe(true);
+    expect(evidence.chunks.every((chunk) => !chunk.overBudget)).toBe(true);
+    expect(sendMSTeamsMessagesMock).toHaveBeenCalledWith(
+      expect.objectContaining({ messages: [{ text: longReply }] }),
+    );
+  });
+
+  it("keeps long post-native progress remainders on the selected native Teams surface", async () => {
+    renderReplyPayloadsToMessagesMock.mockImplementation((payloads) =>
+      payloads.flatMap((payload) =>
+        typeof payload.text === "string" && payload.text ? [{ text: payload.text }] : [],
+      ),
+    );
     const dispatcher = createDispatcher("personal", { streaming: { mode: "progress" } });
     const stream = getStreamMock();
+    stream.close
+      .mockResolvedValueOnce({ id: "stream-final" })
+      .mockResolvedValueOnce({ id: "post-native-stream-final" });
     const previewPrefix = "A".repeat(12_100);
     const remainder = "B".repeat(3_200);
     const fullReply = `${previewPrefix}\n\n${remainder}`;
+    const plan = planTeamsTextWindowChunks(fullReply);
+    const nativeIds = plan.chunks.map((chunk) =>
+      chunk.index === 1 ? "stream-final" : `post-native-stream-final-${chunk.index}`,
+    );
+    stream.close.mockReset();
+    for (const id of nativeIds) {
+      stream.close.mockResolvedValueOnce({ id });
+    }
 
     const result = await dispatcher.delivery.deliver({ text: fullReply }, { kind: "final" });
     expect(sendMSTeamsMessagesMock).not.toHaveBeenCalled();
@@ -1222,18 +1414,14 @@ describe("createMSTeamsReplyDispatcher", () => {
       visibleReplySent: true,
       content: fullReply,
     });
-    expect(outcome?.messageIds?.[0]).toBe("stream-final");
-    expect(outcome?.messageIds).toContain("post-native-digest-id");
-    expect(renderReplyPayloadsToMessagesMock).toHaveBeenCalledWith(
-      [{ text: expect.stringContaining(remainder.slice(0, 100)) }],
-      expect.objectContaining({ chunkText: false }),
-    );
-    expect(sendMSTeamsMessagesMock).toHaveBeenCalledTimes(1);
-    expect(sendMSTeamsMessagesMock.mock.calls[0]?.[0].messages?.[0]?.text).toContain(
-      remainder.slice(0, 100),
-    );
+    expect(outcome?.messageIds).toEqual(nativeIds);
+    expect(renderReplyPayloadsToMessagesMock).not.toHaveBeenCalled();
+    expect(sendMSTeamsMessagesMock).not.toHaveBeenCalled();
     const emittedTexts = stream.emit.mock.calls.map(([activity]) =>
       typeof activity === "string" ? activity : activity.text,
+    );
+    expect(emittedTexts.filter((text): text is string => Boolean(text))).toHaveLength(
+      plan.chunks.length,
     );
     const continuationTexts = emittedTexts.filter((text) => text?.includes("Response continued"));
     expect(continuationTexts).toHaveLength(0);

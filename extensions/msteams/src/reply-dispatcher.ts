@@ -35,6 +35,10 @@ import {
   formatUnknownError,
 } from "./errors.js";
 import {
+  buildMSTeamsHardRulesDeliveryEvidence,
+  type MSTeamsHardRulesDeliveryEvidence,
+} from "./hard-rules-evidence.js";
+import {
   buildConversationReference,
   type MSTeamsRenderedMessage,
   renderReplyPayloadsToMessages,
@@ -62,6 +66,7 @@ export function createMSTeamsReplyDispatcher(params: {
   replyStyle: MSTeamsReplyStyle;
   textLimit: number;
   onSentMessageIds?: (ids: string[]) => void;
+  onHardRulesDeliveryEvidence?: (evidence: MSTeamsHardRulesDeliveryEvidence) => void;
   tokenProvider?: MSTeamsAccessTokenProvider;
   sharePointSiteId?: string;
 }) {
@@ -225,6 +230,8 @@ export function createMSTeamsReplyDispatcher(params: {
     messages: MSTeamsRenderedMessage[];
     finalization: ReturnType<typeof createDeferred<DeliveryOutcome>>;
     content?: string;
+    sourceContent?: string;
+    preferSourceContentOnSuccess: boolean;
     nativeResult?: AcceptedDeliveryPart;
     blockResults: AcceptedDeliveryPart[];
     native: boolean;
@@ -238,11 +245,28 @@ export function createMSTeamsReplyDispatcher(params: {
   // onIdle can overlap later deliveries. Join both close and fallback sends
   // before another payload can mutate or overtake the native segment.
   let pendingSettlement: Promise<void> | undefined;
+  let nativeTextWindowDeliverySelected = false;
   const findPendingNativeDelivery = () =>
     pendingDeliveries.find((candidate) => candidate.native && !candidate.nativeSettled);
 
   const joinAcceptedContents = (contents: readonly (string | undefined)[]): string =>
     contents.filter((content): content is string => Boolean(content)).join("\n");
+
+  const extractPartialTextWindowDelivery = (
+    error: unknown,
+  ): { messageIds: string[] } | undefined => {
+    if (!error || typeof error !== "object") {
+      return undefined;
+    }
+    const ids = (error as { deliveredMessageIds?: unknown }).deliveredMessageIds;
+    if (!Array.isArray(ids)) {
+      return undefined;
+    }
+    const messageIds = ids.filter(
+      (id): id is string => typeof id === "string" && Boolean(id.trim()) && id !== "unknown",
+    );
+    return messageIds.length > 0 ? { messageIds } : undefined;
+  };
 
   const sendMessages = async (messages: MSTeamsRenderedMessage[]): Promise<string[]> => {
     return sendMSTeamsMessages({
@@ -264,7 +288,6 @@ export function createMSTeamsReplyDispatcher(params: {
       mediaMaxBytes,
       feedbackLoopEnabled,
       serviceUrlBoundary: resolveMSTeamsSdkCloudOptions(msteamsCfg),
-      msteamsConfig: msteamsCfg,
     });
   };
 
@@ -334,7 +357,9 @@ export function createMSTeamsReplyDispatcher(params: {
     const content =
       delivery.errors.length > 0
         ? joinAcceptedContents(acceptedParts.map((part) => part.content))
-        : delivery.content;
+        : delivery.preferSourceContentOnSuccess
+          ? (delivery.sourceContent ?? delivery.content)
+          : delivery.content;
     return {
       visibleReplySent: acceptedParts.length > 0,
       ...(messageIds.length > 0 ? { messageIds } : {}),
@@ -353,6 +378,22 @@ export function createMSTeamsReplyDispatcher(params: {
     delivery.settled = true;
     const outcome = deliveryOutcome(delivery);
     if (delivery.errors.length === 0) {
+      if (outcome.content && outcome.messageIds?.length) {
+        try {
+          params.onHardRulesDeliveryEvidence?.(
+            buildMSTeamsHardRulesDeliveryEvidence({
+              conversationId: params.conversationRef.conversation?.id,
+              conversationType: params.conversationRef.conversation?.conversationType,
+              sourceText: outcome.content,
+              messageIds: outcome.messageIds,
+            }),
+          );
+        } catch (error) {
+          params.log.warn?.("failed to record Teams hard-rules delivery evidence", {
+            error: formatUnknownError(error),
+          });
+        }
+      }
       delivery.finalization.resolve(outcome);
       return;
     }
@@ -381,6 +422,8 @@ export function createMSTeamsReplyDispatcher(params: {
       messages,
       finalization,
       content: payload.text,
+      sourceContent: payload.text,
+      preferSourceContentOnSuccess: false,
       blockResults: [],
       native,
       nativeSettled: !native,
@@ -414,6 +457,14 @@ export function createMSTeamsReplyDispatcher(params: {
           }
           sentIds.push(...validIds);
         } catch (msgError) {
+          const partial = extractPartialTextWindowDelivery(msgError);
+          if (partial) {
+            delivery.blockResults.push({
+              messageIds: partial.messageIds,
+              ...(msg.text ? { content: msg.text } : {}),
+            });
+            sentIds.push(...partial.messageIds);
+          }
           failed += 1;
           lastFailedError = msgError;
           delivery.errors.push(msgError);
@@ -448,6 +499,7 @@ export function createMSTeamsReplyDispatcher(params: {
   const sendNativeContinuationPayloads = async (
     delivery: PendingDelivery,
     payloads: ReplyPayload[],
+    options: { allowBlockFallback: boolean } = { allowBlockFallback: true },
   ): Promise<string[]> => {
     const sentIds: string[] = [];
     for (const payload of payloads) {
@@ -465,11 +517,21 @@ export function createMSTeamsReplyDispatcher(params: {
         });
       }
       if (result.fallbackPayload) {
+        if (!options.allowBlockFallback) {
+          throw new Error(
+            "Teams native continuation failed after native delivery was selected; refusing block/card fallback continuation",
+          );
+        }
         delivery.messages.push(...renderReplyPayload(result.fallbackPayload));
       }
     }
     return sentIds;
   };
+
+  const shouldUseNativeContinuationPayloads = (payloads: readonly ReplyPayload[]): boolean =>
+    nativeTextWindowDeliverySelected &&
+    payloads.length > 0 &&
+    streamController.hasNativeFinalMessageStream();
 
   const dispatcherOptions: NonNullable<ChannelInboundTurnPlan["dispatcherOptions"]> = {
     ...replyPipeline,
@@ -507,9 +569,7 @@ export function createMSTeamsReplyDispatcher(params: {
           ? createTeamsContinuationPayloads(preparedPayload)
           : [];
       const nativeContinuation =
-        !native &&
-        continuationPayloads.length > 1 &&
-        streamController.hasNativeFinalMessageStream();
+        !native && shouldUseNativeContinuationPayloads(continuationPayloads);
       const messages =
         continuationPayloads.length > 0 && !nativeContinuation
           ? renderContinuationPayloads(continuationPayloads)
@@ -593,6 +653,13 @@ export function createMSTeamsReplyDispatcher(params: {
           };
         }
         const hasPostNativePayloads = Boolean(nativeResult.postNativePayloads?.length);
+        if (
+          nativeResult.visibleReplySent &&
+          nativeResult.postNativePayloads?.some((payload) => payload.text?.startsWith("Part "))
+        ) {
+          nativeTextWindowDeliverySelected = true;
+          nativeDelivery.preferSourceContentOnSuccess = true;
+        }
         if (nativeResult.logicalContent !== undefined) {
           nativeDelivery.content = nativeResult.logicalContent;
         } else if (
@@ -607,25 +674,34 @@ export function createMSTeamsReplyDispatcher(params: {
           ...(nativeResult.postNativePayloads ?? []),
         ];
         if (afterNativePayloads.length > 0) {
-          for (const payload of afterNativePayloads) {
-            const continuationPayloads = createTeamsContinuationPayloads(payload);
-            if (continuationPayloads.length > 1 && streamController.hasNativeFinalMessageStream()) {
-              const sentIds = await sendNativeContinuationPayloads(
-                nativeDelivery,
-                continuationPayloads,
-              );
-              if (sentIds.length > 0) {
-                try {
-                  params.onSentMessageIds?.(sentIds);
-                } catch (error) {
-                  params.log.warn?.("failed to record sent Teams message ids", {
-                    error: formatUnknownError(error),
-                  });
+          try {
+            for (const payload of afterNativePayloads) {
+              const continuationPayloads = createTeamsContinuationPayloads(payload);
+              if (
+                nativeResult.visibleReplySent &&
+                shouldUseNativeContinuationPayloads(continuationPayloads) &&
+                payload.text
+              ) {
+                const sentIds = await sendNativeContinuationPayloads(
+                  nativeDelivery,
+                  continuationPayloads,
+                  { allowBlockFallback: false },
+                );
+                if (sentIds.length > 0) {
+                  try {
+                    params.onSentMessageIds?.(sentIds);
+                  } catch (error) {
+                    params.log.warn?.("failed to record sent Teams message ids", {
+                      error: formatUnknownError(error),
+                    });
+                  }
                 }
+              } else {
+                nativeDelivery.messages.push(...(await renderPostNativePayload(payload)));
               }
-            } else {
-              nativeDelivery.messages.push(...(await renderPostNativePayload(payload)));
             }
+          } catch (error) {
+            nativeDelivery.errors.push(error);
           }
           nativeDelivery.blockSettled = nativeDelivery.messages.length === 0;
         }
