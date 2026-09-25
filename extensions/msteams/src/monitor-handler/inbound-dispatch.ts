@@ -80,6 +80,10 @@ const deliveredEmployeeContainerStatusUpdates = new Set<string>();
 
 const EMPLOYEE_WORKSPACE_LINK_RE =
   /\[([^\]\n]{1,160})\]\((\/home\/openclaw\/workspace\/[^)\s]+)\)/gu;
+const EMPLOYEE_DIRECT_FILE_UPLOAD_LINE_RE =
+  /^.*\b(?:OneDrive|SharePoint|Excel(?:\s+attachment)?\/?link|Excel link)\b.*https?:\/\/\S*(?:sharepoint|onedrive)\S*.*$/gimu;
+const EMPLOYEE_DIRECT_TEAMS_ATTACHMENT_DISABLED_LINE_RE =
+  /^.*Direct Teams attachment delivery is still disabled\b.*$/gimu;
 const EMPLOYEE_WORKSPACE_ROOT = "/home/openclaw/workspace/";
 const EMPLOYEE_HOST_WORKSPACE_ROOT = "/srv/openclaw/data/employee-agents";
 
@@ -129,6 +133,8 @@ function prepareEmployeeTerminalReplyPayload(params: {
   }
 
   rewritten = rewritten
+    .replace(EMPLOYEE_DIRECT_FILE_UPLOAD_LINE_RE, "")
+    .replace(EMPLOYEE_DIRECT_TEAMS_ATTACHMENT_DISABLED_LINE_RE, "")
     .replace(/\bhere:\s*$/gimu, "attached here:")
     .replace(/\n{3,}/gu, "\n\n")
     .trim();
