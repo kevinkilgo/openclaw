@@ -233,6 +233,7 @@ describe("msteams messenger", () => {
     delete process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_CHAT_MAP;
     delete process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_MIN_BYTES;
     delete process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_TOKEN_FILE;
+    delete process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_TOKEN_FILE_MAP;
   });
 
   describe("renderReplyPayloadsToMessages", () => {
@@ -460,6 +461,67 @@ describe("msteams messenger", () => {
         expect(persisted.access_token).toBe("fresh-access");
         expect(persisted.refreshToken).toBe("fresh-refresh");
         expect(persisted.refresh_token).toBe("fresh-refresh");
+      } finally {
+        await rm(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("uses a conversation-specific Graph native token file when configured", async () => {
+      const tmpDir = await mkdtemp(
+        path.join(resolvePreferredOpenClawTmpDir(), "msteams-token-map-"),
+      );
+      const fallbackTokenFile = path.join(tmpDir, "fallback-token.json");
+      const mappedTokenFile = path.join(tmpDir, "mapped-token.json");
+      try {
+        await writeFile(
+          fallbackTokenFile,
+          JSON.stringify({
+            accessToken: "fallback-access",
+            access_token: "fallback-access",
+            expiresAt: Date.now() + 60 * 60 * 1000,
+          }),
+        );
+        await writeFile(
+          mappedTokenFile,
+          JSON.stringify({
+            accessToken: "mapped-access",
+            access_token: "mapped-access",
+            expiresAt: Date.now() + 60 * 60 * 1000,
+          }),
+        );
+        process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_ENABLED = "1";
+        process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_ALLOWED_CONVERSATION_IDS =
+          "19:abc@thread.tacv2";
+        process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_CHAT_MAP = `{"19:abc@thread.tacv2":"19:graph-chat@unq.gbl.spaces"}`;
+        process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_MIN_BYTES = "1";
+        process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_TOKEN_FILE = fallbackTokenFile;
+        process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_TOKEN_FILE_MAP = JSON.stringify({
+          "19:abc@thread.tacv2": mappedTokenFile,
+        });
+        graphNativeMockState.sendGraphNativeTextLive.mockResolvedValue({
+          messageIds: ["graph-message-id"],
+          responses: [],
+        });
+
+        await sendMSTeamsMessages({
+          replyStyle: "top-level",
+          app: createMockApp(),
+          appId: "app123",
+          conversationRef: {
+            ...baseRef,
+            conversation: { id: "19:abc@thread.tacv2", conversationType: "personal" },
+          },
+          msteamsConfig: {
+            appId: "client-id",
+            appPassword: "client-secret",
+            tenantId: "tenant-id",
+          },
+          messages: [{ text: "native graph mapped token" }],
+        });
+
+        expect(graphNativeMockState.sendGraphNativeTextLive).toHaveBeenCalledWith(
+          expect.objectContaining({ token: "mapped-access" }),
+        );
       } finally {
         await rm(tmpDir, { recursive: true, force: true });
       }

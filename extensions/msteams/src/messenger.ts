@@ -122,6 +122,7 @@ type GraphNativeLongTextSettings = {
   minTextBytes: number;
   maxPayloadBytes: number;
   tokenFile?: string;
+  tokenFileByConversationId: Map<string, string>;
 };
 
 type GraphNativeTokenFile = {
@@ -200,6 +201,9 @@ function resolveGraphNativeLongTextSettings(env = process.env): GraphNativeLongT
       90 * 1024,
     ),
     tokenFile: env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_TOKEN_FILE?.trim() || undefined,
+    tokenFileByConversationId: parseGraphNativeChatMap(
+      env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_TOKEN_FILE_MAP,
+    ),
   };
 }
 
@@ -269,13 +273,18 @@ async function readGraphNativeTokenFile(params: {
 }
 
 async function resolveGraphNativeDelegatedToken(params: {
+  conversationId?: string;
   msteamsConfig?: MSTeamsConfig;
   settings: GraphNativeLongTextSettings;
 }): Promise<string | undefined> {
   const creds = resolveMSTeamsCredentials(params.msteamsConfig);
-  if (params.settings.tokenFile) {
+  const mappedTokenFile = params.conversationId
+    ? params.settings.tokenFileByConversationId.get(params.conversationId)
+    : undefined;
+  const tokenFile = mappedTokenFile ?? params.settings.tokenFile;
+  if (tokenFile) {
     const token = await readGraphNativeTokenFile({
-      path: params.settings.tokenFile,
+      path: tokenFile,
       credentials: creds?.type === "secret" ? creds : undefined,
     });
     if (token) {
@@ -767,6 +776,7 @@ export async function sendMSTeamsMessages(params: {
       return undefined;
     }
     const token = await resolveGraphNativeDelegatedToken({
+      conversationId,
       msteamsConfig: params.msteamsConfig,
       settings: graphNativeLongTextSettings,
     });
