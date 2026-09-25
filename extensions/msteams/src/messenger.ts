@@ -47,6 +47,7 @@ import { sendMSTeamsActivityWithReference } from "./sdk-proactive.js";
 import type { MSTeamsActivityLike } from "./sdk-types.js";
 import type { MSTeamsApp } from "./sdk.js";
 import { resolveDelegatedAccessToken, resolveMSTeamsCredentials } from "./token.js";
+import { normalizeMSTeamsExcelWorkbookBuffer } from "./xlsx-normalizer.js";
 
 /**
  * MSTeams-specific media size limit (100MB).
@@ -515,6 +516,14 @@ async function buildActivity(
       });
       contentType = media.contentType ?? contentType;
       fileName = media.fileName ?? fileName;
+      const normalizedWorkbook = await normalizeMSTeamsExcelWorkbookBuffer({
+        buffer: media.buffer,
+        filename: fileName,
+        contentType,
+      });
+      if (normalizedWorkbook.repaired) {
+        media.buffer = normalizedWorkbook.buffer;
+      }
 
       // Determine conversation type and file type
       // Teams only accepts base64 data URLs for images
