@@ -1,5 +1,6 @@
 // Msteams plugin module dispatches prepared inbound turns and owns reply lifecycle handling.
 import { readFile } from "node:fs/promises";
+import { basename, join, normalize } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   createChannelInboundEnvelopeBuilder,
@@ -76,6 +77,69 @@ const EMPLOYEE_CONTAINER_MODEL_UNAVAILABLE_TEXT =
   "The kkilgo test lane is temporarily unavailable because its model profile is in cooldown. I won't keep retrying this request in Teams; we'll retry after the lane is healthy.";
 const activeEmployeeContainerProviderLoginFlows = createProviderLoginFlowRegistry();
 const deliveredEmployeeContainerStatusUpdates = new Set<string>();
+
+const EMPLOYEE_WORKSPACE_LINK_RE =
+  /\[([^\]\n]{1,160})\]\((\/home\/openclaw\/workspace\/[^)\s]+)\)/gu;
+const EMPLOYEE_WORKSPACE_ROOT = "/home/openclaw/workspace/";
+const EMPLOYEE_HOST_WORKSPACE_ROOT = "/srv/openclaw/data/employee-agents";
+
+function resolveEmployeeWorkspaceMediaUrl(params: {
+  routeAgentId: string;
+  employeePath: string;
+}): string | undefined {
+  if (!params.employeePath.startsWith(EMPLOYEE_WORKSPACE_ROOT)) {
+    return undefined;
+  }
+  const relative = params.employeePath.slice(EMPLOYEE_WORKSPACE_ROOT.length);
+  const normalized = normalize(relative);
+  if (!normalized || normalized.startsWith("..") || normalized.includes("/../")) {
+    return undefined;
+  }
+  const hostPath = join(EMPLOYEE_HOST_WORKSPACE_ROOT, params.routeAgentId, "workspace", normalized);
+  return `file://${hostPath}`;
+}
+
+function prepareEmployeeTerminalReplyPayload(params: {
+  routeAgentId: string;
+  text: string;
+}): ReplyPayload {
+  const mediaUrls: string[] = [];
+  const seen = new Set<string>();
+  let rewritten = params.text.replace(
+    EMPLOYEE_WORKSPACE_LINK_RE,
+    (match: string, labelRaw: string, pathRaw: string) => {
+      const mediaUrl = resolveEmployeeWorkspaceMediaUrl({
+        routeAgentId: params.routeAgentId,
+        employeePath: pathRaw,
+      });
+      if (!mediaUrl) {
+        return match;
+      }
+      if (!seen.has(mediaUrl)) {
+        seen.add(mediaUrl);
+        mediaUrls.push(mediaUrl);
+      }
+      const label = labelRaw.trim() || basename(pathRaw);
+      return label;
+    },
+  );
+
+  if (mediaUrls.length === 0) {
+    return { text: params.text };
+  }
+
+  rewritten = rewritten
+    .replace(/\bhere:\s*$/gimu, "attached here:")
+    .replace(/\n{3,}/gu, "\n\n")
+    .trim();
+  const attachmentLine =
+    mediaUrls.length === 1
+      ? "I attached the generated file directly in Teams."
+      : `I attached ${mediaUrls.length} generated files directly in Teams.`;
+  const text = rewritten ? `${rewritten}\n\n${attachmentLine}` : attachmentLine;
+  return { text, mediaUrls };
+}
+
 function employeeContainerGatewayClientOptions() {
   return {
     clientName: "gateway-client" as const,
@@ -794,7 +858,10 @@ async function dispatchViaEmployeeContainer(params: {
     logEmployeeCommsTrace({ log: params.log, trace });
     throw err;
   }
-  const payload: ReplyPayload = { text };
+  const payload = prepareEmployeeTerminalReplyPayload({
+    routeAgentId: params.routeAgentId,
+    text,
+  });
   trace.outboundAttemptAtMs = nowMs();
   // SAFETY: The delivery implementation treats this metadata as opaque reply lifecycle tags.
   const result = await params.delivery.deliver(payload, {

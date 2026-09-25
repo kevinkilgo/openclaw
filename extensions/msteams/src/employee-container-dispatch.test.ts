@@ -210,6 +210,41 @@ describe("msteams employee container dispatch", () => {
     expect(replyDispatcherMockState.settle).toHaveBeenCalledTimes(1);
   });
 
+  it("attaches employee workspace files instead of exposing local links", async () => {
+    gatewayRuntimeMockState.callGatewayFromCli.mockReset();
+    gatewayRuntimeMockState.callGatewayFromCli
+      .mockResolvedValueOnce({ runId: "run-excel" })
+      .mockResolvedValueOnce({
+        status: "ok",
+        terminalReply: {
+          text: `Done. I created the Excel workbook here:
+[q3.xlsx](/home/openclaw/workspace/q3.xlsx)
+I also kept [q3.json](/home/openclaw/workspace/q3.json).`,
+        },
+      });
+    const cfg = createConfig();
+    const runtime = { error: vi.fn() } as unknown as RuntimeEnv;
+    const handler = createMSTeamsMessageHandler(createMSTeamsMessageHandlerDeps({ cfg, runtime }));
+
+    await handler(createContext());
+
+    expect(replyDispatcherMockState.deliver).toHaveBeenCalledWith(
+      {
+        text: expect.stringContaining("I attached 2 generated files directly in Teams."),
+        mediaUrls: [
+          "file:///srv/openclaw/data/employee-agents/kkilgo/workspace/q3.xlsx",
+          "file:///srv/openclaw/data/employee-agents/kkilgo/workspace/q3.json",
+        ],
+      },
+      expect.objectContaining({ kind: "final", stage: "final" }),
+    );
+    const deliveredPayload = replyDispatcherMockState.deliver.mock.calls[0]?.[0] as {
+      text?: string;
+    };
+    expect(deliveredPayload.text).not.toContain("/home/openclaw/workspace");
+    expect(replyDispatcherMockState.settle).toHaveBeenCalledTimes(1);
+  });
+
   it("starts a Teams typing indicator while the employee container handles the turn", async () => {
     const cfg = createConfig();
     const runtime = { error: vi.fn() } as unknown as RuntimeEnv;
