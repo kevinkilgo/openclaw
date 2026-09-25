@@ -493,7 +493,7 @@ async function buildActivity(
   tokenProvider?: MSTeamsAccessTokenProvider,
   sharePointSiteId?: string,
   mediaMaxBytes?: number,
-  options?: { feedbackLoopEnabled?: boolean },
+  options?: { feedbackLoopEnabled?: boolean; mediaLocalRoots?: readonly string[] },
 ): Promise<Record<string, unknown>> {
   const activity: Record<string, unknown> = buildMSTeamsMessageActivity(msg.text);
 
@@ -509,7 +509,10 @@ async function buildActivity(
 
     if (isLocalPath(msg.mediaUrl)) {
       const maxBytes = mediaMaxBytes ?? MSTEAMS_MAX_MEDIA_BYTES;
-      const media = await loadWebMedia(msg.mediaUrl, maxBytes);
+      const media = await loadWebMedia(msg.mediaUrl, {
+        maxBytes,
+        localRoots: options?.mediaLocalRoots,
+      });
       contentType = media.contentType ?? contentType;
       fileName = media.fileName ?? fileName;
 
@@ -610,6 +613,8 @@ export async function sendMSTeamsMessages(params: {
   mediaMaxBytes?: number;
   /** Enable the Teams feedback loop (thumbs up/down) on sent messages. */
   feedbackLoopEnabled?: boolean;
+  /** Approved local roots for local media attachments rendered by this delivery path. */
+  mediaLocalRoots?: readonly string[];
   serviceUrlBoundary?: MSTeamsSdkCloudOptions;
   msteamsConfig?: MSTeamsConfig;
 }): Promise<string[]> {
@@ -671,7 +676,10 @@ export async function sendMSTeamsMessages(params: {
             params.tokenProvider,
             params.sharePointSiteId,
             params.mediaMaxBytes,
-            { feedbackLoopEnabled: params.feedbackLoopEnabled },
+            {
+              feedbackLoopEnabled: params.feedbackLoopEnabled,
+              mediaLocalRoots: params.mediaLocalRoots,
+            },
           );
 
           pendingUploadId ??=

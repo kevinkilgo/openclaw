@@ -1148,6 +1148,9 @@ export async function dispatchMSTeamsInboundTurn(params: {
     },
     tokenProvider,
     sharePointSiteId: cfg.channels?.msteams?.sharePointSiteId,
+    mediaLocalRoots: route.agentId
+      ? [join(EMPLOYEE_HOST_WORKSPACE_ROOT, route.agentId, "workspace")]
+      : undefined,
   });
 
   // SAFETY: Bot Framework clientInfo entities expose optional timezone; malformed values fall back to stored conversation timezone.

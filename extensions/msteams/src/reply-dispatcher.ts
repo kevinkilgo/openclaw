@@ -69,6 +69,7 @@ export function createMSTeamsReplyDispatcher(params: {
   onHardRulesDeliveryEvidence?: (evidence: MSTeamsHardRulesDeliveryEvidence) => void;
   tokenProvider?: MSTeamsAccessTokenProvider;
   sharePointSiteId?: string;
+  mediaLocalRoots?: readonly string[];
 }) {
   const core = getMSTeamsRuntime();
   const msteamsCfg = params.cfg.channels?.msteams;
@@ -287,6 +288,7 @@ export function createMSTeamsReplyDispatcher(params: {
       sharePointSiteId: params.sharePointSiteId,
       mediaMaxBytes,
       feedbackLoopEnabled,
+      mediaLocalRoots: params.mediaLocalRoots,
       serviceUrlBoundary: resolveMSTeamsSdkCloudOptions(msteamsCfg),
     });
   };
