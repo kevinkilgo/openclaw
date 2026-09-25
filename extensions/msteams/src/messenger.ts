@@ -30,6 +30,7 @@ import { classifyMSTeamsSendError } from "./errors.js";
 import { prepareFileConsentActivity, requiresFileConsent } from "./file-consent-helpers.js";
 import { formatMSTeamsMarkdown } from "./format.js";
 import { buildTeamsFileInfoCard } from "./graph-chat.js";
+import { renderGraphNativeMessageHtml } from "./graph-html-renderer.js";
 import { sendGraphNativeTextLive } from "./graph-message-send.js";
 import {
   getDriveItemProperties,
@@ -757,7 +758,11 @@ export async function sendMSTeamsMessages(params: {
     }
     const sent = await sendGraphNativeTextLive({
       route: { type: "chat", chatId: plan.graphChatId },
-      text: message.text,
+      text: renderGraphNativeMessageHtml(message.text),
+      contentType: "html",
+      allowHtml: true,
+      htmlJustification:
+        "Microsoft Graph Teams chatMessage bodies support text or html; render agent Markdown as sanitized HTML for Teams desktop fidelity.",
       token,
       maxPayloadBytes: graphNativeLongTextSettings.maxPayloadBytes,
     });

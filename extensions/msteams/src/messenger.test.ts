@@ -448,7 +448,10 @@ describe("msteams messenger", () => {
         expect(graphNativeMockState.sendGraphNativeTextLive).toHaveBeenCalledWith(
           expect.objectContaining({
             route: { type: "chat", chatId: "19:graph-chat@unq.gbl.spaces" },
-            text: "native graph long text",
+            text: "<p>native graph long text</p>",
+            contentType: "html",
+            allowHtml: true,
+            htmlJustification: expect.stringContaining("Microsoft Graph Teams chatMessage bodies"),
             token: "fresh-access",
           }),
         );
@@ -457,6 +460,77 @@ describe("msteams messenger", () => {
         expect(persisted.access_token).toBe("fresh-access");
         expect(persisted.refreshToken).toBe("fresh-refresh");
         expect(persisted.refresh_token).toBe("fresh-refresh");
+      } finally {
+        await rm(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("renders Markdown as sanitized HTML for Graph native delivery", async () => {
+      process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_ENABLED = "1";
+      process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_ALLOWED_CONVERSATION_IDS =
+        "19:abc@thread.tacv2";
+      process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_CHAT_MAP =
+        '{"19:abc@thread.tacv2":"19:graph-chat@unq.gbl.spaces"}';
+      process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_MIN_BYTES = "1";
+      const tmpDir = await mkdtemp(path.join(resolvePreferredOpenClawTmpDir(), "msteams-html-"));
+      const tokenFile = path.join(tmpDir, "graph-token.json");
+      try {
+        await writeFile(
+          tokenFile,
+          JSON.stringify({
+            accessToken: "fresh-access",
+            access_token: "fresh-access",
+            expiresAt: Date.now() + 60 * 60 * 1000,
+          }),
+        );
+        process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_TOKEN_FILE = tokenFile;
+        graphNativeMockState.sendGraphNativeTextLive.mockResolvedValue({
+          messageIds: ["graph-message-id"],
+          responses: [],
+        });
+
+        await sendMSTeamsMessages({
+          replyStyle: "top-level",
+          app: createMockApp(),
+          appId: "app123",
+          conversationRef: {
+            ...baseRef,
+            conversation: { id: "19:abc@thread.tacv2", conversationType: "personal" },
+          },
+          msteamsConfig: {
+            appId: "client-id",
+            appPassword: "client-secret",
+            tenantId: "tenant-id",
+            delegatedAuth: { enabled: true },
+          },
+          messages: [
+            {
+              text: [
+                "Richard, Salesforce shows **36 opportunities** created this week.",
+                "",
+                "| Opportunity | Amount |",
+                "|---|---:|",
+                "| XOM-FG-3701F | $100,000 |",
+                "",
+                "Use `Salesforce` safely.",
+                "<script>alert('x')</script>",
+              ].join("\n"),
+            },
+          ],
+        });
+
+        expect(graphNativeMockState.sendGraphNativeTextLive).toHaveBeenCalledWith(
+          expect.objectContaining({
+            contentType: "html",
+            allowHtml: true,
+            text: expect.stringContaining("<strong>36 opportunities</strong>"),
+          }),
+        );
+        const html = graphNativeMockState.sendGraphNativeTextLive.mock.calls[0]?.[0]?.text;
+        expect(html).toContain("<table>");
+        expect(html).toContain("<code>Salesforce</code>");
+        expect(html).toContain("&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;");
+        expect(html).not.toContain("<script>");
       } finally {
         await rm(tmpDir, { recursive: true, force: true });
       }
