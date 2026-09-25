@@ -62,12 +62,12 @@ vi.mock("./reply-dispatcher.js", () => ({
   }),
 }));
 
-function createContext(): MSTeamsTurnContext {
+function createContext(text = "Hello from Teams"): MSTeamsTurnContext {
   return {
     activity: {
       id: "teams-message-1",
       type: "message",
-      text: "Hello from Teams",
+      text,
       channelId: "msteams",
       serviceUrl: "https://service.example.test",
       from: {
@@ -210,6 +210,103 @@ describe("msteams employee container dispatch", () => {
     expect(replyDispatcherMockState.settle).toHaveBeenCalledTimes(1);
   });
 
+  it("attaches employee workspace files instead of exposing local links", async () => {
+    gatewayRuntimeMockState.callGatewayFromCli.mockReset();
+    gatewayRuntimeMockState.callGatewayFromCli
+      .mockResolvedValueOnce({ runId: "run-excel" })
+      .mockResolvedValueOnce({
+        status: "ok",
+        terminalReply: {
+          text: `Done. I created the Excel workbook here:
+[q3.xlsx](/home/openclaw/workspace/q3.xlsx)
+I also kept [q3.json](/home/openclaw/workspace/q3.json).`,
+        },
+      });
+    const cfg = createConfig();
+    const runtime = { error: vi.fn() } as unknown as RuntimeEnv;
+    const handler = createMSTeamsMessageHandler(createMSTeamsMessageHandlerDeps({ cfg, runtime }));
+
+    await handler(createContext("Can I get that as an Excel attachment?"));
+
+    expect(replyDispatcherMockState.deliver).toHaveBeenCalledWith(
+      {
+        text: expect.stringContaining("I attached 2 generated files directly in Teams."),
+        mediaUrls: [
+          "file:///srv/openclaw/data/employee-agents/kkilgo/workspace/q3.xlsx",
+          "file:///srv/openclaw/data/employee-agents/kkilgo/workspace/q3.json",
+        ],
+      },
+      expect.objectContaining({ kind: "final", stage: "final" }),
+    );
+    const deliveredPayload = replyDispatcherMockState.deliver.mock.calls[0]?.[0] as {
+      text?: string;
+    };
+    expect(deliveredPayload.text).not.toContain("/home/openclaw/workspace");
+    expect(replyDispatcherMockState.settle).toHaveBeenCalledTimes(1);
+  });
+
+  it("suppresses employee workspace attachments when the user did not ask for an artifact", async () => {
+    gatewayRuntimeMockState.callGatewayFromCli.mockReset();
+    gatewayRuntimeMockState.callGatewayFromCli
+      .mockResolvedValueOnce({ runId: "run-chat-only" })
+      .mockResolvedValueOnce({
+        status: "ok",
+        terminalReply: {
+          text: `Using the Q3 opened-opportunity extract:
+
+Found 404 opportunities opened this quarter.
+
+Full workbook is here: [q3_opened.xlsx](/home/openclaw/workspace/q3_opened.xlsx)
+I attached the generated file directly in Teams.`,
+        },
+      });
+    const cfg = createConfig();
+    const runtime = { error: vi.fn() } as unknown as RuntimeEnv;
+    const handler = createMSTeamsMessageHandler(createMSTeamsMessageHandlerDeps({ cfg, runtime }));
+
+    await handler(createContext("show me the recently opened opportunities this quarter"));
+
+    expect(replyDispatcherMockState.deliver).toHaveBeenCalledWith(
+      {
+        text: "Using the Q3 opened-opportunity extract:\n\nFound 404 opportunities opened this quarter.",
+      },
+      expect.objectContaining({ kind: "final", stage: "final" }),
+    );
+    const deliveredPayload = replyDispatcherMockState.deliver.mock.calls[0]?.[0] as {
+      mediaUrls?: string[];
+      text?: string;
+    };
+    expect(deliveredPayload.mediaUrls).toBeUndefined();
+    expect(deliveredPayload.text).not.toContain("q3_opened.xlsx");
+    expect(deliveredPayload.text).not.toContain("attached");
+    expect(replyDispatcherMockState.settle).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts a Teams typing indicator while the employee container handles the turn", async () => {
+    const cfg = createConfig();
+    const runtime = { error: vi.fn() } as unknown as RuntimeEnv;
+    const handler = createMSTeamsMessageHandler(createMSTeamsMessageHandlerDeps({ cfg, runtime }));
+    const context = createContext();
+
+    await handler(context);
+    await Promise.resolve();
+
+    expect(context.sendActivity).toHaveBeenCalledWith({ type: "typing" });
+  });
+
+  it("respects the Teams typingIndicator=false switch for employee container turns", async () => {
+    const cfg = createConfig();
+    cfg.channels!.msteams!.typingIndicator = false;
+    const runtime = { error: vi.fn() } as unknown as RuntimeEnv;
+    const handler = createMSTeamsMessageHandler(createMSTeamsMessageHandlerDeps({ cfg, runtime }));
+    const context = createContext();
+
+    await handler(context);
+    await Promise.resolve();
+
+    expect(context.sendActivity).not.toHaveBeenCalledWith({ type: "typing" });
+  });
+
   it("delivers long-running employee turns without an accepted progress warning", async () => {
     const cfg = createLongWaitConfig();
     const runtime = { error: vi.fn() } as unknown as RuntimeEnv;
@@ -225,7 +322,7 @@ describe("msteams employee container dispatch", () => {
     expect(replyDispatcherMockState.settle).toHaveBeenCalledTimes(1);
   });
 
-  it("defaults Teams employee dispatch waits to the simple-turn SLA", async () => {
+  it("defaults Teams employee dispatch waits to the long-running turn SLA", async () => {
     const cfg = createDefaultWaitConfig();
     const runtime = { error: vi.fn() } as unknown as RuntimeEnv;
     const deps = createMSTeamsMessageHandlerDeps({ cfg, runtime });
@@ -239,10 +336,10 @@ describe("msteams employee container dispatch", () => {
       {
         url: "ws://employee-agent-kkilgo:18789",
         token: "test-token",
-        timeout: "60000",
+        timeout: "300000",
       },
       expect.objectContaining({
-        timeout: 60,
+        timeout: 300,
       }),
       { clientName: "gateway-client", mode: "backend", scopes: ["operator.write"] },
     );
@@ -252,9 +349,9 @@ describe("msteams employee container dispatch", () => {
       {
         url: "ws://employee-agent-kkilgo:18789",
         token: "test-token",
-        timeout: "70000",
+        timeout: "310000",
       },
-      { runId: "run-1", timeoutMs: 60000 },
+      { runId: "run-1", timeoutMs: 300000 },
       { clientName: "gateway-client", mode: "backend", scopes: ["operator.write"] },
     );
     expect(deps.log.info).toHaveBeenCalledWith(
@@ -281,14 +378,14 @@ describe("msteams employee container dispatch", () => {
     const handler = createMSTeamsMessageHandler(deps);
 
     await expect(handler(createContext())).rejects.toThrow(
-      "employee comms connector/tool startup timeout after 60000ms",
+      "employee comms connector/tool startup timeout after 300000ms",
     );
 
     expect(gatewayRuntimeMockState.callGatewayFromCli).toHaveBeenNthCalledWith(
       2,
       "agent.wait",
-      expect.objectContaining({ timeout: "70000" }),
-      { runId: "run-slow-connectors", timeoutMs: 60000 },
+      expect.objectContaining({ timeout: "310000" }),
+      { runId: "run-slow-connectors", timeoutMs: 300000 },
       { clientName: "gateway-client", mode: "backend", scopes: ["operator.write"] },
     );
     expect(deps.log.info).toHaveBeenCalledWith(
@@ -301,7 +398,7 @@ describe("msteams employee container dispatch", () => {
       }),
     );
     expect(runtime.error).toHaveBeenCalledWith(
-      expect.stringContaining("connector/tool startup timeout after 60000ms"),
+      expect.stringContaining("connector/tool startup timeout after 300000ms"),
     );
     expect(replyDispatcherMockState.deliver).toHaveBeenCalledWith(
       {

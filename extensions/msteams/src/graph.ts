@@ -1,10 +1,13 @@
 // Msteams plugin module implements graph behavior.
+import { readFile, writeFile } from "node:fs/promises";
 import { responseWithRelease } from "openclaw/plugin-sdk/fetch-runtime";
+import { isFutureDateTimestampMs } from "openclaw/plugin-sdk/number-runtime";
 import { readProviderJsonResponse } from "openclaw/plugin-sdk/provider-http";
 import { fetchWithSsrFGuard, type MSTeamsConfig } from "../runtime-api.js";
 import { GRAPH_ROOT } from "./attachments/shared.js";
 import { resolveMSTeamsSdkCloudOptions } from "./cloud.js";
 import { createMSTeamsHttpError } from "./http-error.js";
+import { refreshMSTeamsDelegatedTokens } from "./oauth.token.js";
 import {
   MSTEAMS_REQUEST_TIMEOUT_MS,
   resolveMSTeamsRequestTimeoutMs,
@@ -168,6 +171,85 @@ type GraphPagedResponse<T> = {
   "@odata.nextLink"?: string;
 };
 
+type GraphNativeTokenFile = {
+  accessToken?: string;
+  access_token?: string;
+  expiresAt?: number;
+  expires_at?: number;
+  refreshToken?: string;
+  refresh_token?: string;
+  scope?: string;
+  scopes?: string[];
+};
+
+function resolveGraphNativeTokenFileExpiresAtMs(parsed: GraphNativeTokenFile): number | undefined {
+  if (Number.isFinite(parsed.expiresAt)) {
+    return parsed.expiresAt;
+  }
+  if (Number.isFinite(parsed.expires_at)) {
+    return parsed.expires_at * 1000;
+  }
+  return undefined;
+}
+
+function resolveGraphNativeTokenFileScopes(parsed: GraphNativeTokenFile): string[] | undefined {
+  if (Array.isArray(parsed.scopes) && parsed.scopes.every((scope) => typeof scope === "string")) {
+    return parsed.scopes;
+  }
+  if (typeof parsed.scope === "string" && parsed.scope.trim()) {
+    return parsed.scope.split(/\s+/u).filter(Boolean);
+  }
+  return undefined;
+}
+
+async function readGraphNativeTokenFile(params: {
+  path: string | undefined;
+  credentials?: Extract<ReturnType<typeof resolveMSTeamsCredentials>, { type: "secret" }>;
+}): Promise<string | undefined> {
+  const path = params.path;
+  if (!path) {
+    return undefined;
+  }
+
+  // SAFETY: Token-file fields are read as optional strings and validated before return.
+  const raw = await readFile(path, "utf8");
+  const parsed = JSON.parse(raw) as GraphNativeTokenFile;
+  const token = parsed.accessToken ?? parsed.access_token;
+  const expiresAtMs = resolveGraphNativeTokenFileExpiresAtMs(parsed);
+  if (typeof token === "string" && token.trim() && isFutureDateTimestampMs(expiresAtMs)) {
+    return token.trim();
+  }
+
+  const refreshToken = parsed.refreshToken ?? parsed.refresh_token;
+  if (!params.credentials || typeof refreshToken !== "string" || !refreshToken.trim()) {
+    return typeof token === "string" && token.trim() ? token.trim() : undefined;
+  }
+
+  const refreshed = await refreshMSTeamsDelegatedTokens({
+    tenantId: params.credentials.tenantId,
+    clientId: params.credentials.appId,
+    refreshToken: refreshToken.trim(),
+    scopes: resolveGraphNativeTokenFileScopes(parsed),
+  });
+  const nextPayload = {
+    ...parsed,
+    accessToken: refreshed.accessToken,
+    access_token: refreshed.accessToken,
+    refreshToken: refreshed.refreshToken,
+    refresh_token: refreshed.refreshToken,
+    expiresAt: refreshed.expiresAt,
+    expires_at: Math.floor(refreshed.expiresAt / 1000),
+    scope: refreshed.scopes.join(" "),
+    scopes: refreshed.scopes,
+  };
+  await writeFile(path, `${JSON.stringify(nextPayload, null, 2)}\n`, "utf8");
+  return refreshed.accessToken;
+}
+
+function resolveGraphNativeTokenFilePath(): string | undefined {
+  return process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_TOKEN_FILE?.trim() || undefined;
+}
+
 /** Result of a paginated Graph API fetch. */
 export type PaginatedResult<T> = {
   items: T[];
@@ -242,6 +324,14 @@ export async function resolveGraphToken(
 
   // Try delegated token if requested and configured
   if (options?.preferDelegated && msteamsCfg?.delegatedAuth?.enabled && creds.type === "secret") {
+    const graphNativeToken = await readGraphNativeTokenFile({
+      path: resolveGraphNativeTokenFilePath(),
+      credentials: creds,
+    });
+    if (graphNativeToken) {
+      return graphNativeToken;
+    }
+
     const delegated = await resolveDelegatedAccessToken({
       tenantId: creds.tenantId,
       clientId: creds.appId,

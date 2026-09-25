@@ -19,7 +19,10 @@ export type { ChannelPlugin } from "openclaw/plugin-sdk/channel-core";
 export { logTypingFailure } from "openclaw/plugin-sdk/channel-outbound";
 export { createChannelPairingController } from "openclaw/plugin-sdk/channel-pairing";
 export { resolveToolsBySender } from "openclaw/plugin-sdk/channel-policy";
-export { createChannelMessageReplyPipeline } from "openclaw/plugin-sdk/channel-outbound";
+export {
+  createChannelMessageReplyPipeline,
+  createTypingCallbacks,
+} from "openclaw/plugin-sdk/channel-outbound";
 export {
   PAIRING_APPROVED_MESSAGE,
   buildProbeChannelStatusSummary,

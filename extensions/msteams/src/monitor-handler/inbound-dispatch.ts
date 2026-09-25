@@ -1,5 +1,6 @@
 // Msteams plugin module dispatches prepared inbound turns and owns reply lifecycle handling.
 import { readFile } from "node:fs/promises";
+import { basename, join, normalize } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   createChannelInboundEnvelopeBuilder,
@@ -20,12 +21,20 @@ import {
 import { createChannelHistoryWindow, type HistoryEntry } from "openclaw/plugin-sdk/reply-history";
 import { sliceUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import type { OpenClawConfig, ReplyPayload, RuntimeEnv } from "../../runtime-api.js";
+import { createTypingCallbacks, logTypingFailure } from "../../runtime-api.js";
+import { resolveMSTeamsSdkCloudOptions } from "../cloud.js";
+import type { StoredConversationReference } from "../conversation-store.js";
 import { sendTeamsTurnActivityWithBudget } from "../delivery-budget.js";
 import { formatUnknownError } from "../errors.js";
+import { buildConversationReference } from "../messenger.js";
 import type { MSTeamsMessageHandlerDeps } from "../monitor-handler.types.js";
 import { resolveMSTeamsAllowlistMatch, resolveMSTeamsReplyPolicy } from "../policy.js";
 import { createMSTeamsReplyDispatcher } from "../reply-dispatcher.js";
+import { withRevokedProxyFallback } from "../revoked-context.js";
 import { getMSTeamsRuntime } from "../runtime.js";
+import { sendMSTeamsActivityWithReference } from "../sdk-proactive.js";
+import type { MSTeamsTurnContext } from "../sdk-types.js";
+import type { MSTeamsApp } from "../sdk.js";
 import { recordMSTeamsSentMessage } from "../sent-message-cache.js";
 import type { admitMSTeamsMessage } from "./access.js";
 import { resolveMSTeamsSenderAccess } from "./access.js";
@@ -60,13 +69,115 @@ type GatewayAgentWaitResult = {
 
 const EMPLOYEE_CONTAINER_SESSION_CLAIM_RETRY_ATTEMPTS = 3;
 const EMPLOYEE_CONTAINER_SESSION_CLAIM_RETRY_DELAY_MS = 1_000;
-const EMPLOYEE_CONTAINER_DEFAULT_WAIT_TIMEOUT_MS = 60_000;
+const EMPLOYEE_CONTAINER_DEFAULT_WAIT_TIMEOUT_MS = 300_000;
+const EMPLOYEE_CONTAINER_TYPING_KEEPALIVE_INTERVAL_MS = 8_000;
 const EMPLOYEE_CONTAINER_FAILURE_UPDATE_TEXT =
   "I hit an issue before I could finish that request. I've logged it and we're working on the fix; I'll notify you when it's ready to retry.";
 const EMPLOYEE_CONTAINER_MODEL_UNAVAILABLE_TEXT =
   "The kkilgo test lane is temporarily unavailable because its model profile is in cooldown. I won't keep retrying this request in Teams; we'll retry after the lane is healthy.";
 const activeEmployeeContainerProviderLoginFlows = createProviderLoginFlowRegistry();
 const deliveredEmployeeContainerStatusUpdates = new Set<string>();
+
+const EMPLOYEE_WORKSPACE_LINK_RE =
+  /\[([^\]\n]{1,160})\]\((\/home\/openclaw\/workspace\/[^)\s]+)\)/gu;
+const EMPLOYEE_DIRECT_FILE_UPLOAD_LINE_RE =
+  /^.*\b(?:OneDrive|SharePoint|Excel(?:\s+attachment)?\/?link|Excel link)\b.*https?:\/\/\S*(?:sharepoint|onedrive)\S*.*$/gimu;
+const EMPLOYEE_DIRECT_TEAMS_ATTACHMENT_DISABLED_LINE_RE =
+  /^.*Direct Teams attachment delivery is still disabled\b.*$/gimu;
+const EMPLOYEE_WORKSPACE_FILE_REFERENCE_LINE_RE =
+  /^.*\b(?:full\s+workbook|workbook|spreadsheet|excel|xlsx|csv|pdf|file|attachment)\b.*\/home\/openclaw\/workspace\/.*$/gimu;
+const EMPLOYEE_FILE_REFERENCE_LINE_RE =
+  /^.*\b(?:full\s+workbook|workbook|spreadsheet|excel\s+link|excel\s+attachment|file|attachment|workspace link)\b.*\b[\w.-]+\.(?:xlsx|xls|csv|pdf|json|docx)\b.*$/gimu;
+const EMPLOYEE_STANDALONE_FILE_LINE_RE =
+  /^\s*(?:[-*]\s*)?[\w .-]+\.(?:xlsx|xls|csv|pdf|json|docx)\s*\.?\s*$/gimu;
+const EMPLOYEE_ATTACHMENT_CONFIRMATION_LINE_RE =
+  /^.*\b(?:attached|uploaded|upload|workspace link|available from the workspace link)\b.*(?:Teams|OneDrive|SharePoint|workspace link|directly).*$/gimu;
+const EMPLOYEE_WORKSPACE_ROOT = "/home/openclaw/workspace/";
+const EMPLOYEE_HOST_WORKSPACE_ROOT = "/srv/openclaw/data/employee-agents";
+
+function resolveEmployeeWorkspaceMediaUrl(params: {
+  routeAgentId: string;
+  employeePath: string;
+}): string | undefined {
+  if (!params.employeePath.startsWith(EMPLOYEE_WORKSPACE_ROOT)) {
+    return undefined;
+  }
+  const relative = params.employeePath.slice(EMPLOYEE_WORKSPACE_ROOT.length);
+  const normalized = normalize(relative);
+  if (!normalized || normalized.startsWith("..") || normalized.includes("/../")) {
+    return undefined;
+  }
+  const hostPath = join(EMPLOYEE_HOST_WORKSPACE_ROOT, params.routeAgentId, "workspace", normalized);
+  return `file://${hostPath}`;
+}
+
+function prepareEmployeeTerminalReplyPayload(params: {
+  routeAgentId: string;
+  text: string;
+  artifactRequested?: boolean;
+}): ReplyPayload {
+  const mediaUrls: string[] = [];
+  const seen = new Set<string>();
+  let rewritten = params.text.replace(
+    EMPLOYEE_WORKSPACE_LINK_RE,
+    (match: string, labelRaw: string, pathRaw: string) => {
+      const mediaUrl = resolveEmployeeWorkspaceMediaUrl({
+        routeAgentId: params.routeAgentId,
+        employeePath: pathRaw,
+      });
+      if (!mediaUrl) {
+        return match;
+      }
+      if (!seen.has(mediaUrl)) {
+        seen.add(mediaUrl);
+        mediaUrls.push(mediaUrl);
+      }
+      const label = labelRaw.trim() || basename(pathRaw);
+      return label;
+    },
+  );
+
+  if (!params.artifactRequested) {
+    rewritten = rewritten
+      .replace(EMPLOYEE_WORKSPACE_FILE_REFERENCE_LINE_RE, "")
+      .replace(EMPLOYEE_FILE_REFERENCE_LINE_RE, "")
+      .replace(EMPLOYEE_STANDALONE_FILE_LINE_RE, "")
+      .replace(EMPLOYEE_DIRECT_FILE_UPLOAD_LINE_RE, "")
+      .replace(EMPLOYEE_DIRECT_TEAMS_ATTACHMENT_DISABLED_LINE_RE, "")
+      .replace(EMPLOYEE_ATTACHMENT_CONFIRMATION_LINE_RE, "")
+      .replace(/\n{3,}/gu, "\n\n")
+      .trim();
+    return { text: rewritten || params.text };
+  }
+
+  if (mediaUrls.length === 0) {
+    return { text: params.text };
+  }
+
+  rewritten = rewritten
+    .replace(EMPLOYEE_DIRECT_FILE_UPLOAD_LINE_RE, "")
+    .replace(EMPLOYEE_DIRECT_TEAMS_ATTACHMENT_DISABLED_LINE_RE, "")
+    .replace(/\bhere:\s*$/gimu, "attached here:")
+    .replace(/\n{3,}/gu, "\n\n")
+    .trim();
+  const attachmentLine =
+    mediaUrls.length === 1
+      ? "I attached the generated file directly in Teams."
+      : `I attached ${mediaUrls.length} generated files directly in Teams.`;
+  const text = rewritten ? `${rewritten}\n\n${attachmentLine}` : attachmentLine;
+  return { text, mediaUrls };
+}
+
+function employeeRequestExplicitlyAskedForArtifact(message: string): boolean {
+  const normalized = message.replace(/\s+/gu, " ").trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return /\b(?:artifact|attachment|attach|file|download|export|spreadsheet|workbook|excel|xlsx|csv|pdf|document)\b/u.test(
+    normalized,
+  );
+}
+
 function employeeContainerGatewayClientOptions() {
   return {
     clientName: "gateway-client" as const,
@@ -111,6 +222,67 @@ function readEmployeeContainerDispatchConfig(
   cfg: OpenClawConfig,
 ): MSTeamsEmployeeContainerDispatchConfig | undefined {
   return cfg.channels?.msteams?.employeeContainerDispatch;
+}
+
+function createEmployeeContainerTypingCallbacks(params: {
+  cfg: OpenClawConfig;
+  app: MSTeamsApp;
+  context: MSTeamsTurnContext;
+  conversationRef: StoredConversationReference;
+  routeAgentId: string;
+  maxDurationMs: number;
+  log: MSTeamsMessageHandlerDeps["log"];
+}) {
+  const msteamsCfg = params.cfg.channels?.msteams;
+  const typingIndicatorEnabled =
+    typeof msteamsCfg?.typingIndicator === "boolean" ? msteamsCfg.typingIndicator : true;
+  if (!typingIndicatorEnabled) {
+    return undefined;
+  }
+  const conversationType = params.conversationRef.conversation?.conversationType?.toLowerCase();
+  if (conversationType !== "personal" && conversationType !== "groupchat") {
+    return undefined;
+  }
+  const sendTypingIndicator = async () => {
+    await withRevokedProxyFallback({
+      run: async () => {
+        await sendTeamsTurnActivityWithBudget({
+          activity: { type: "typing" },
+          send: params.context.sendActivity,
+        });
+      },
+      onRevoked: async () => {
+        const baseRef = buildConversationReference(params.conversationRef);
+        await sendTeamsTurnActivityWithBudget({
+          activity: { type: "typing" },
+          send: async (activity) =>
+            await sendMSTeamsActivityWithReference(params.app, baseRef, activity, {
+              serviceUrlBoundary: resolveMSTeamsSdkCloudOptions(msteamsCfg),
+            }),
+        });
+      },
+      onRevokedLog: () => {
+        params.log.debug?.(
+          "turn context revoked, sending employee container typing via proactive messaging",
+        );
+      },
+    });
+  };
+
+  return createTypingCallbacks({
+    start: sendTypingIndicator,
+    keepaliveIntervalMs: EMPLOYEE_CONTAINER_TYPING_KEEPALIVE_INTERVAL_MS,
+    maxDurationMs: params.maxDurationMs,
+    onStartError: (err: unknown) => {
+      logTypingFailure({
+        log: (message) => params.log.debug?.(message),
+        channel: "msteams",
+        target: `employee-container:${params.routeAgentId}`,
+        action: "start",
+        error: err,
+      });
+    },
+  });
 }
 
 function fillEmployeeTemplate(template: string, agentId: string): string {
@@ -559,6 +731,9 @@ export async function startEmployeeCodexDeviceLogin(params: {
 
 async function dispatchViaEmployeeContainer(params: {
   cfg: OpenClawConfig;
+  app: MSTeamsApp;
+  context: MSTeamsTurnContext;
+  conversationRef: StoredConversationReference;
   routeAgentId: string;
   routeSessionKey: string;
   message: string;
@@ -587,90 +762,112 @@ async function dispatchViaEmployeeContainer(params: {
   const idempotencyKey = `msteams-employee-container:${params.routeAgentId}:${
     params.messageId ?? sessionKey
   }`;
+  const typingCallbacks = createEmployeeContainerTypingCallbacks({
+    cfg: params.cfg,
+    app: params.app,
+    context: params.context,
+    conversationRef: params.conversationRef,
+    routeAgentId: params.routeAgentId,
+    maxDurationMs:
+      waitTimeoutMs +
+      EMPLOYEE_CONTAINER_SESSION_CLAIM_RETRY_ATTEMPTS *
+        EMPLOYEE_CONTAINER_SESSION_CLAIM_RETRY_DELAY_MS +
+      10_000,
+    log: params.log,
+  });
   let waitResult: GatewayAgentWaitResult | undefined;
   const trace: MSTeamsEmployeeCommsTrace = {
     routeAgentId: params.routeAgentId,
     teamsMessageId: params.messageId,
   };
   const startedAtMs = nowMs();
-  for (let attempt = 1; attempt <= EMPLOYEE_CONTAINER_SESSION_CLAIM_RETRY_ATTEMPTS; attempt += 1) {
-    params.log.info("dispatching msteams turn to employee container", {
-      routeAgentId: params.routeAgentId,
-      employeeAgentId,
-      sessionKey,
-      attempt,
-    });
-    try {
-      // SAFETY: Agent gateway responses are checked for runId immediately before the run id is used.
-      const accepted = (await callGatewayFromCli(
-        "agent",
-        { url, token, timeout: String(waitTimeoutMs) },
-        {
-          agentId: employeeAgentId,
-          sessionKey,
-          message: params.message,
-          idempotencyKey,
-          deliver: false,
-          timeout: Math.ceil(waitTimeoutMs / 1000),
-          sourceReplyDeliveryMode: "automatic",
-        },
-        employeeContainerGatewayClientOptions(),
-      )) as GatewayAgentAccepted; // SAFETY: Agent gateway responses are checked for runId immediately before the run id is used.
-      if (!accepted.runId) {
-        throw new Error("employee container agent run did not return a runId");
+  try {
+    await typingCallbacks?.onReplyStart();
+    for (
+      let attempt = 1;
+      attempt <= EMPLOYEE_CONTAINER_SESSION_CLAIM_RETRY_ATTEMPTS;
+      attempt += 1
+    ) {
+      params.log.info("dispatching msteams turn to employee container", {
+        routeAgentId: params.routeAgentId,
+        employeeAgentId,
+        sessionKey,
+        attempt,
+      });
+      try {
+        // SAFETY: Agent gateway responses are checked for runId immediately before the run id is used.
+        const accepted = (await callGatewayFromCli(
+          "agent",
+          { url, token, timeout: String(waitTimeoutMs) },
+          {
+            agentId: employeeAgentId,
+            sessionKey,
+            message: params.message,
+            idempotencyKey,
+            deliver: false,
+            timeout: Math.ceil(waitTimeoutMs / 1000),
+            sourceReplyDeliveryMode: "automatic",
+          },
+          employeeContainerGatewayClientOptions(),
+        )) as GatewayAgentAccepted; // SAFETY: Agent gateway responses are checked for runId immediately before the run id is used.
+        if (!accepted.runId) {
+          throw new Error("employee container agent run did not return a runId");
+        }
+        trace.employeeRunId = accepted.runId;
+        trace.dispatchAcceptedAtMs = nowMs();
+        // SAFETY: agent.wait responses are narrowed by status/error/terminalReply checks before data is delivered.
+        waitResult = (await callGatewayFromCli(
+          "agent.wait",
+          { url, token, timeout: String(waitTimeoutMs + 10_000) },
+          { runId: accepted.runId, timeoutMs: waitTimeoutMs },
+          employeeContainerGatewayClientOptions(),
+        )) as GatewayAgentWaitResult; // SAFETY: agent.wait responses are narrowed by status/error/terminalReply checks before data is delivered.
+        if (waitResult.status === "ok") {
+          trace.employeeCompletedAtMs = nowMs();
+          break;
+        }
+        const errorDetail = waitResult.error?.trim();
+        if (waitResult.status === "timeout") {
+          throw createEmployeeCommsTimeoutError({
+            routeAgentId: params.routeAgentId,
+            waitTimeoutMs,
+            runId: accepted.runId,
+            detail: errorDetail,
+          });
+        }
+        throw new Error(
+          `employee container agent run ended with status ${waitResult.status ?? "unknown"}${
+            errorDetail ? `: ${errorDetail}` : ""
+          }`,
+        );
+      } catch (err) {
+        if (
+          attempt < EMPLOYEE_CONTAINER_SESSION_CLAIM_RETRY_ATTEMPTS &&
+          isRetryableEmployeeContainerSessionClaimError(err)
+        ) {
+          const retryLog =
+            typeof params.log.warn === "function"
+              ? params.log.warn.bind(params.log)
+              : params.log.info;
+          retryLog("retrying msteams employee container dispatch after session claim race", {
+            routeAgentId: params.routeAgentId,
+            employeeAgentId,
+            sessionKey,
+            attempt,
+            error: formatUnknownError(err),
+          });
+          await sleep(EMPLOYEE_CONTAINER_SESSION_CLAIM_RETRY_DELAY_MS * attempt);
+          continue;
+        }
+        trace.finalStatus = "failed";
+        trace.totalLatencyMs = nowMs() - startedAtMs;
+        trace.failureClassification = classifyEmployeeCommsFailure(err);
+        logEmployeeCommsTrace({ log: params.log, trace });
+        throw err;
       }
-      trace.employeeRunId = accepted.runId;
-      trace.dispatchAcceptedAtMs = nowMs();
-      // SAFETY: agent.wait responses are narrowed by status/error/terminalReply checks before data is delivered.
-      waitResult = (await callGatewayFromCli(
-        "agent.wait",
-        { url, token, timeout: String(waitTimeoutMs + 10_000) },
-        { runId: accepted.runId, timeoutMs: waitTimeoutMs },
-        employeeContainerGatewayClientOptions(),
-      )) as GatewayAgentWaitResult; // SAFETY: agent.wait responses are narrowed by status/error/terminalReply checks before data is delivered.
-      if (waitResult.status === "ok") {
-        trace.employeeCompletedAtMs = nowMs();
-        break;
-      }
-      const errorDetail = waitResult.error?.trim();
-      if (waitResult.status === "timeout") {
-        throw createEmployeeCommsTimeoutError({
-          routeAgentId: params.routeAgentId,
-          waitTimeoutMs,
-          runId: accepted.runId,
-          detail: errorDetail,
-        });
-      }
-      throw new Error(
-        `employee container agent run ended with status ${waitResult.status ?? "unknown"}${
-          errorDetail ? `: ${errorDetail}` : ""
-        }`,
-      );
-    } catch (err) {
-      if (
-        attempt < EMPLOYEE_CONTAINER_SESSION_CLAIM_RETRY_ATTEMPTS &&
-        isRetryableEmployeeContainerSessionClaimError(err)
-      ) {
-        const retryLog =
-          typeof params.log.warn === "function"
-            ? params.log.warn.bind(params.log)
-            : params.log.info;
-        retryLog("retrying msteams employee container dispatch after session claim race", {
-          routeAgentId: params.routeAgentId,
-          employeeAgentId,
-          sessionKey,
-          attempt,
-          error: formatUnknownError(err),
-        });
-        await sleep(EMPLOYEE_CONTAINER_SESSION_CLAIM_RETRY_DELAY_MS * attempt);
-        continue;
-      }
-      trace.finalStatus = "failed";
-      trace.totalLatencyMs = nowMs() - startedAtMs;
-      trace.failureClassification = classifyEmployeeCommsFailure(err);
-      logEmployeeCommsTrace({ log: params.log, trace });
-      throw err;
     }
+  } finally {
+    typingCallbacks?.onCleanup?.();
   }
   if (!waitResult || waitResult.status !== "ok") {
     const err = new Error("employee container agent run did not complete");
@@ -699,7 +896,11 @@ async function dispatchViaEmployeeContainer(params: {
     logEmployeeCommsTrace({ log: params.log, trace });
     throw err;
   }
-  const payload: ReplyPayload = { text };
+  const payload = prepareEmployeeTerminalReplyPayload({
+    routeAgentId: params.routeAgentId,
+    text,
+    artifactRequested: employeeRequestExplicitlyAskedForArtifact(params.message),
+  });
   trace.outboundAttemptAtMs = nowMs();
   // SAFETY: The delivery implementation treats this metadata as opaque reply lifecycle tags.
   const result = await params.delivery.deliver(payload, {
@@ -986,6 +1187,9 @@ export async function dispatchMSTeamsInboundTurn(params: {
     },
     tokenProvider,
     sharePointSiteId: cfg.channels?.msteams?.sharePointSiteId,
+    mediaLocalRoots: route.agentId
+      ? [join(EMPLOYEE_HOST_WORKSPACE_ROOT, route.agentId, "workspace")]
+      : undefined,
   });
 
   // SAFETY: Bot Framework clientInfo entities expose optional timezone; malformed values fall back to stored conversation timezone.
@@ -1012,6 +1216,9 @@ export async function dispatchMSTeamsInboundTurn(params: {
     try {
       const result = await dispatchViaEmployeeContainer({
         cfg: turnConfig,
+        app,
+        context,
+        conversationRef,
         routeAgentId: route.agentId,
         routeSessionKey: route.sessionKey,
         message: bodyForAgent,

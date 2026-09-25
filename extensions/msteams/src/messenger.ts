@@ -1,5 +1,6 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { PlatformMessageNotDispatchedError } from "openclaw/plugin-sdk/error-runtime";
+import { isFutureDateTimestampMs } from "openclaw/plugin-sdk/number-runtime";
 // Msteams plugin module implements messenger behavior.
 import {
   isSilentReplyText,
@@ -29,6 +30,7 @@ import { classifyMSTeamsSendError } from "./errors.js";
 import { prepareFileConsentActivity, requiresFileConsent } from "./file-consent-helpers.js";
 import { formatMSTeamsMarkdown } from "./format.js";
 import { buildTeamsFileInfoCard } from "./graph-chat.js";
+import { renderGraphNativeMessageHtml } from "./graph-html-renderer.js";
 import { sendGraphNativeTextLive } from "./graph-message-send.js";
 import {
   getDriveItemProperties,
@@ -37,6 +39,7 @@ import {
 } from "./graph-upload.js";
 import { extractFilename, extractMessageId, getMimeType, isLocalPath } from "./media-helpers.js";
 import { buildMSTeamsMessageActivity } from "./message-activity.js";
+import { refreshMSTeamsDelegatedTokens } from "./oauth.token.js";
 import { setPendingUploadActivityId } from "./pending-uploads.js";
 import { withRevokedProxyFallback } from "./revoked-context.js";
 import { getMSTeamsRuntime } from "./runtime.js";
@@ -44,6 +47,7 @@ import { sendMSTeamsActivityWithReference } from "./sdk-proactive.js";
 import type { MSTeamsActivityLike } from "./sdk-types.js";
 import type { MSTeamsApp } from "./sdk.js";
 import { resolveDelegatedAccessToken, resolveMSTeamsCredentials } from "./token.js";
+import { normalizeMSTeamsExcelWorkbookBuffer } from "./xlsx-normalizer.js";
 
 /**
  * MSTeams-specific media size limit (100MB).
@@ -118,11 +122,18 @@ type GraphNativeLongTextSettings = {
   minTextBytes: number;
   maxPayloadBytes: number;
   tokenFile?: string;
+  tokenFileByConversationId: Map<string, string>;
 };
 
 type GraphNativeTokenFile = {
   accessToken?: string;
   access_token?: string;
+  expiresAt?: number;
+  expires_at?: number;
+  refreshToken?: string;
+  refresh_token?: string;
+  scope?: string;
+  scopes?: string[];
 };
 
 function envFlagEnabled(value: string | undefined): boolean {
@@ -190,10 +201,39 @@ function resolveGraphNativeLongTextSettings(env = process.env): GraphNativeLongT
       90 * 1024,
     ),
     tokenFile: env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_TOKEN_FILE?.trim() || undefined,
+    tokenFileByConversationId: parseGraphNativeChatMap(
+      env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_TOKEN_FILE_MAP,
+    ),
   };
 }
 
-async function readGraphNativeTokenFile(path: string | undefined): Promise<string | undefined> {
+function resolveGraphNativeTokenFileExpiresAtMs(parsed: GraphNativeTokenFile): number | undefined {
+  const expiresAt = parsed.expiresAt;
+  if (Number.isFinite(expiresAt)) {
+    return expiresAt;
+  }
+  const expiresAtSeconds = parsed.expires_at;
+  if (Number.isFinite(expiresAtSeconds)) {
+    return expiresAtSeconds * 1000;
+  }
+  return undefined;
+}
+
+function resolveGraphNativeTokenFileScopes(parsed: GraphNativeTokenFile): string[] | undefined {
+  if (Array.isArray(parsed.scopes) && parsed.scopes.every((scope) => typeof scope === "string")) {
+    return parsed.scopes;
+  }
+  if (typeof parsed.scope === "string" && parsed.scope.trim()) {
+    return parsed.scope.split(/\s+/u).filter(Boolean);
+  }
+  return undefined;
+}
+
+async function readGraphNativeTokenFile(params: {
+  path: string | undefined;
+  credentials?: Extract<ReturnType<typeof resolveMSTeamsCredentials>, { type: "secret" }>;
+}): Promise<string | undefined> {
+  const path = params.path;
   if (!path) {
     return undefined;
   }
@@ -201,14 +241,56 @@ async function readGraphNativeTokenFile(path: string | undefined): Promise<strin
   // SAFETY: Token-file fields are read as optional strings and validated before return.
   const parsed = JSON.parse(raw) as GraphNativeTokenFile;
   const token = parsed.accessToken ?? parsed.access_token;
-  return typeof token === "string" && token.trim() ? token.trim() : undefined;
+  const expiresAtMs = resolveGraphNativeTokenFileExpiresAtMs(parsed);
+  if (typeof token === "string" && token.trim() && isFutureDateTimestampMs(expiresAtMs)) {
+    return token.trim();
+  }
+
+  const refreshToken = parsed.refreshToken ?? parsed.refresh_token;
+  if (!params.credentials || typeof refreshToken !== "string" || !refreshToken.trim()) {
+    return typeof token === "string" && token.trim() ? token.trim() : undefined;
+  }
+
+  const refreshed = await refreshMSTeamsDelegatedTokens({
+    tenantId: params.credentials.tenantId,
+    clientId: params.credentials.appId,
+    refreshToken: refreshToken.trim(),
+    scopes: resolveGraphNativeTokenFileScopes(parsed),
+  });
+  const nextPayload = {
+    ...parsed,
+    accessToken: refreshed.accessToken,
+    access_token: refreshed.accessToken,
+    refreshToken: refreshed.refreshToken,
+    refresh_token: refreshed.refreshToken,
+    expiresAt: refreshed.expiresAt,
+    expires_at: Math.floor(refreshed.expiresAt / 1000),
+    scope: refreshed.scopes.join(" "),
+    scopes: refreshed.scopes,
+  };
+  await writeFile(path, `${JSON.stringify(nextPayload, null, 2)}\n`, "utf8");
+  return refreshed.accessToken;
 }
 
 async function resolveGraphNativeDelegatedToken(params: {
+  conversationId?: string;
   msteamsConfig?: MSTeamsConfig;
   settings: GraphNativeLongTextSettings;
 }): Promise<string | undefined> {
   const creds = resolveMSTeamsCredentials(params.msteamsConfig);
+  const mappedTokenFile = params.conversationId
+    ? params.settings.tokenFileByConversationId.get(params.conversationId)
+    : undefined;
+  const tokenFile = mappedTokenFile ?? params.settings.tokenFile;
+  if (tokenFile) {
+    const token = await readGraphNativeTokenFile({
+      path: tokenFile,
+      credentials: creds?.type === "secret" ? creds : undefined,
+    });
+    if (token) {
+      return token;
+    }
+  }
   if (creds?.type === "secret") {
     const token = await resolveDelegatedAccessToken({
       tenantId: creds.tenantId,
@@ -219,7 +301,7 @@ async function resolveGraphNativeDelegatedToken(params: {
       return token;
     }
   }
-  return await readGraphNativeTokenFile(params.settings.tokenFile);
+  return undefined;
 }
 
 function shouldUseGraphNativeLongText(params: {
@@ -421,7 +503,7 @@ async function buildActivity(
   tokenProvider?: MSTeamsAccessTokenProvider,
   sharePointSiteId?: string,
   mediaMaxBytes?: number,
-  options?: { feedbackLoopEnabled?: boolean },
+  options?: { feedbackLoopEnabled?: boolean; mediaLocalRoots?: readonly string[] },
 ): Promise<Record<string, unknown>> {
   const activity: Record<string, unknown> = buildMSTeamsMessageActivity(msg.text);
 
@@ -437,9 +519,20 @@ async function buildActivity(
 
     if (isLocalPath(msg.mediaUrl)) {
       const maxBytes = mediaMaxBytes ?? MSTEAMS_MAX_MEDIA_BYTES;
-      const media = await loadWebMedia(msg.mediaUrl, maxBytes);
+      const media = await loadWebMedia(msg.mediaUrl, {
+        maxBytes,
+        localRoots: options?.mediaLocalRoots,
+      });
       contentType = media.contentType ?? contentType;
       fileName = media.fileName ?? fileName;
+      const normalizedWorkbook = await normalizeMSTeamsExcelWorkbookBuffer({
+        buffer: media.buffer,
+        filename: fileName,
+        contentType,
+      });
+      if (normalizedWorkbook.repaired) {
+        media.buffer = normalizedWorkbook.buffer;
+      }
 
       // Determine conversation type and file type
       // Teams only accepts base64 data URLs for images
@@ -538,6 +631,8 @@ export async function sendMSTeamsMessages(params: {
   mediaMaxBytes?: number;
   /** Enable the Teams feedback loop (thumbs up/down) on sent messages. */
   feedbackLoopEnabled?: boolean;
+  /** Approved local roots for local media attachments rendered by this delivery path. */
+  mediaLocalRoots?: readonly string[];
   serviceUrlBoundary?: MSTeamsSdkCloudOptions;
   msteamsConfig?: MSTeamsConfig;
 }): Promise<string[]> {
@@ -599,7 +694,10 @@ export async function sendMSTeamsMessages(params: {
             params.tokenProvider,
             params.sharePointSiteId,
             params.mediaMaxBytes,
-            { feedbackLoopEnabled: params.feedbackLoopEnabled },
+            {
+              feedbackLoopEnabled: params.feedbackLoopEnabled,
+              mediaLocalRoots: params.mediaLocalRoots,
+            },
           );
 
           pendingUploadId ??=
@@ -678,6 +776,7 @@ export async function sendMSTeamsMessages(params: {
       return undefined;
     }
     const token = await resolveGraphNativeDelegatedToken({
+      conversationId,
       msteamsConfig: params.msteamsConfig,
       settings: graphNativeLongTextSettings,
     });
@@ -686,7 +785,11 @@ export async function sendMSTeamsMessages(params: {
     }
     const sent = await sendGraphNativeTextLive({
       route: { type: "chat", chatId: plan.graphChatId },
-      text: message.text,
+      text: renderGraphNativeMessageHtml(message.text),
+      contentType: "html",
+      allowHtml: true,
+      htmlJustification:
+        "Microsoft Graph Teams chatMessage bodies support text or html; render agent Markdown as sanitized HTML for Teams desktop fidelity.",
       token,
       maxPayloadBytes: graphNativeLongTextSettings.maxPayloadBytes,
     });

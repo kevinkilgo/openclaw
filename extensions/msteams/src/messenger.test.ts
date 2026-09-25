@@ -1,5 +1,5 @@
 // Msteams tests cover messenger plugin behavior.
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { PlatformMessageNotDispatchedError } from "openclaw/plugin-sdk/error-runtime";
@@ -13,6 +13,12 @@ const graphUploadMockState = vi.hoisted(() => ({
   uploadAndShareSharePoint: vi.fn(),
   getDriveItemProperties: vi.fn(),
 }));
+const graphNativeMockState = vi.hoisted(() => ({
+  sendGraphNativeTextLive: vi.fn(),
+}));
+const oauthTokenMockState = vi.hoisted(() => ({
+  refreshMSTeamsDelegatedTokens: vi.fn(),
+}));
 
 vi.mock("./graph-upload.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./graph-upload.js")>();
@@ -20,6 +26,20 @@ vi.mock("./graph-upload.js", async (importOriginal) => {
     ...actual,
     uploadAndShareSharePoint: graphUploadMockState.uploadAndShareSharePoint,
     getDriveItemProperties: graphUploadMockState.getDriveItemProperties,
+  };
+});
+vi.mock("./graph-message-send.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./graph-message-send.js")>();
+  return {
+    ...actual,
+    sendGraphNativeTextLive: graphNativeMockState.sendGraphNativeTextLive,
+  };
+});
+vi.mock("./oauth.token.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./oauth.token.js")>();
+  return {
+    ...actual,
+    refreshMSTeamsDelegatedTokens: oauthTokenMockState.refreshMSTeamsDelegatedTokens,
   };
 });
 
@@ -48,6 +68,12 @@ const chunkMarkdownText = (text: string, limit: number) => {
 const runtimeStub = {
   config: {
     loadConfig: () => ({}),
+  },
+  state: {
+    openSyncKeyedStore: () => ({
+      lookup: () => undefined,
+      register: () => {},
+    }),
   },
   channel: {
     text: {
@@ -200,6 +226,14 @@ describe("msteams messenger", () => {
     setMSTeamsRuntime(runtimeStub);
     graphUploadMockState.uploadAndShareSharePoint.mockReset();
     graphUploadMockState.getDriveItemProperties.mockReset();
+    graphNativeMockState.sendGraphNativeTextLive.mockReset();
+    oauthTokenMockState.refreshMSTeamsDelegatedTokens.mockReset();
+    delete process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_ENABLED;
+    delete process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_ALLOWED_CONVERSATION_IDS;
+    delete process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_CHAT_MAP;
+    delete process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_MIN_BYTES;
+    delete process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_TOKEN_FILE;
+    delete process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_TOKEN_FILE_MAP;
   });
 
   describe("renderReplyPayloadsToMessages", () => {
@@ -354,6 +388,214 @@ describe("msteams messenger", () => {
       expect(texts).toEqual(["hello"]);
       expect(ids).toEqual(["id:hello"]);
       expect(capturedConversationId).toBe("19:abc@thread.tacv2");
+    });
+
+    it("refreshes an expired Graph native token file before long-text delivery", async () => {
+      const tmpDir = await mkdtemp(path.join(resolvePreferredOpenClawTmpDir(), "msteams-token-"));
+      const tokenFile = path.join(tmpDir, "graph-token.json");
+      try {
+        await writeFile(
+          tokenFile,
+          JSON.stringify({
+            accessToken: "expired-access",
+            access_token: "expired-access",
+            refreshToken: "refresh-token",
+            refresh_token: "refresh-token",
+            expires_at: 1,
+            scope: "ChatMessage.Send User.Read",
+          }),
+        );
+        process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_ENABLED = "1";
+        process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_ALLOWED_CONVERSATION_IDS =
+          "19:abc@thread.tacv2";
+        process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_CHAT_MAP =
+          '{"19:abc@thread.tacv2":"19:graph-chat@unq.gbl.spaces"}';
+        process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_MIN_BYTES = "1";
+        process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_TOKEN_FILE = tokenFile;
+        oauthTokenMockState.refreshMSTeamsDelegatedTokens.mockResolvedValue({
+          accessToken: "fresh-access",
+          refreshToken: "fresh-refresh",
+          expiresAt: Date.now() + 60 * 60 * 1000,
+          scopes: ["ChatMessage.Send", "User.Read"],
+        });
+        graphNativeMockState.sendGraphNativeTextLive.mockResolvedValue({
+          messageIds: ["graph-message-id"],
+          responses: [],
+        });
+
+        const ids = await sendMSTeamsMessages({
+          replyStyle: "top-level",
+          app: createMockApp(),
+          appId: "app123",
+          conversationRef: {
+            ...baseRef,
+            conversation: { id: "19:abc@thread.tacv2", conversationType: "personal" },
+          },
+          msteamsConfig: {
+            appId: "client-id",
+            appPassword: "client-secret",
+            tenantId: "tenant-id",
+          },
+          messages: [{ text: "native graph long text" }],
+        });
+
+        expect(ids).toEqual(["graph-message-id"]);
+        expect(oauthTokenMockState.refreshMSTeamsDelegatedTokens).toHaveBeenCalledWith({
+          tenantId: "tenant-id",
+          clientId: "client-id",
+          refreshToken: "refresh-token",
+          scopes: ["ChatMessage.Send", "User.Read"],
+        });
+        expect(graphNativeMockState.sendGraphNativeTextLive).toHaveBeenCalledWith(
+          expect.objectContaining({
+            route: { type: "chat", chatId: "19:graph-chat@unq.gbl.spaces" },
+            text: "<p>native graph long text</p>",
+            contentType: "html",
+            allowHtml: true,
+            htmlJustification: expect.stringContaining("Microsoft Graph Teams chatMessage bodies"),
+            token: "fresh-access",
+          }),
+        );
+        const persisted = JSON.parse(await readFile(tokenFile, "utf8")) as Record<string, unknown>;
+        expect(persisted.accessToken).toBe("fresh-access");
+        expect(persisted.access_token).toBe("fresh-access");
+        expect(persisted.refreshToken).toBe("fresh-refresh");
+        expect(persisted.refresh_token).toBe("fresh-refresh");
+      } finally {
+        await rm(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("uses a conversation-specific Graph native token file when configured", async () => {
+      const tmpDir = await mkdtemp(
+        path.join(resolvePreferredOpenClawTmpDir(), "msteams-token-map-"),
+      );
+      const fallbackTokenFile = path.join(tmpDir, "fallback-token.json");
+      const mappedTokenFile = path.join(tmpDir, "mapped-token.json");
+      try {
+        await writeFile(
+          fallbackTokenFile,
+          JSON.stringify({
+            accessToken: "fallback-access",
+            access_token: "fallback-access",
+            expiresAt: Date.now() + 60 * 60 * 1000,
+          }),
+        );
+        await writeFile(
+          mappedTokenFile,
+          JSON.stringify({
+            accessToken: "mapped-access",
+            access_token: "mapped-access",
+            expiresAt: Date.now() + 60 * 60 * 1000,
+          }),
+        );
+        process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_ENABLED = "1";
+        process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_ALLOWED_CONVERSATION_IDS =
+          "19:abc@thread.tacv2";
+        process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_CHAT_MAP = `{"19:abc@thread.tacv2":"19:graph-chat@unq.gbl.spaces"}`;
+        process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_MIN_BYTES = "1";
+        process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_TOKEN_FILE = fallbackTokenFile;
+        process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_TOKEN_FILE_MAP = JSON.stringify({
+          "19:abc@thread.tacv2": mappedTokenFile,
+        });
+        graphNativeMockState.sendGraphNativeTextLive.mockResolvedValue({
+          messageIds: ["graph-message-id"],
+          responses: [],
+        });
+
+        await sendMSTeamsMessages({
+          replyStyle: "top-level",
+          app: createMockApp(),
+          appId: "app123",
+          conversationRef: {
+            ...baseRef,
+            conversation: { id: "19:abc@thread.tacv2", conversationType: "personal" },
+          },
+          msteamsConfig: {
+            appId: "client-id",
+            appPassword: "client-secret",
+            tenantId: "tenant-id",
+          },
+          messages: [{ text: "native graph mapped token" }],
+        });
+
+        expect(graphNativeMockState.sendGraphNativeTextLive).toHaveBeenCalledWith(
+          expect.objectContaining({ token: "mapped-access" }),
+        );
+      } finally {
+        await rm(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("renders Markdown as sanitized HTML for Graph native delivery", async () => {
+      process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_ENABLED = "1";
+      process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_ALLOWED_CONVERSATION_IDS =
+        "19:abc@thread.tacv2";
+      process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_CHAT_MAP =
+        '{"19:abc@thread.tacv2":"19:graph-chat@unq.gbl.spaces"}';
+      process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_LONG_TEXT_MIN_BYTES = "1";
+      const tmpDir = await mkdtemp(path.join(resolvePreferredOpenClawTmpDir(), "msteams-html-"));
+      const tokenFile = path.join(tmpDir, "graph-token.json");
+      try {
+        await writeFile(
+          tokenFile,
+          JSON.stringify({
+            accessToken: "fresh-access",
+            access_token: "fresh-access",
+            expiresAt: Date.now() + 60 * 60 * 1000,
+          }),
+        );
+        process.env.OPENCLAW_MSTEAMS_GRAPH_NATIVE_TOKEN_FILE = tokenFile;
+        graphNativeMockState.sendGraphNativeTextLive.mockResolvedValue({
+          messageIds: ["graph-message-id"],
+          responses: [],
+        });
+
+        await sendMSTeamsMessages({
+          replyStyle: "top-level",
+          app: createMockApp(),
+          appId: "app123",
+          conversationRef: {
+            ...baseRef,
+            conversation: { id: "19:abc@thread.tacv2", conversationType: "personal" },
+          },
+          msteamsConfig: {
+            appId: "client-id",
+            appPassword: "client-secret",
+            tenantId: "tenant-id",
+            delegatedAuth: { enabled: true },
+          },
+          messages: [
+            {
+              text: [
+                "Richard, Salesforce shows **36 opportunities** created this week.",
+                "",
+                "| Opportunity | Amount |",
+                "|---|---:|",
+                "| XOM-FG-3701F | $100,000 |",
+                "",
+                "Use `Salesforce` safely.",
+                "<script>alert('x')</script>",
+              ].join("\n"),
+            },
+          ],
+        });
+
+        expect(graphNativeMockState.sendGraphNativeTextLive).toHaveBeenCalledWith(
+          expect.objectContaining({
+            contentType: "html",
+            allowHtml: true,
+            text: expect.stringContaining("<strong>36 opportunities</strong>"),
+          }),
+        );
+        const html = graphNativeMockState.sendGraphNativeTextLive.mock.calls[0]?.[0]?.text;
+        expect(html).toContain("<table>");
+        expect(html).toContain("<code>Salesforce</code>");
+        expect(html).toContain("&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;");
+        expect(html).not.toContain("<script>");
+      } finally {
+        await rm(tmpDir, { recursive: true, force: true });
+      }
     });
 
     it("requires SharePoint storage for channel files", async () => {
