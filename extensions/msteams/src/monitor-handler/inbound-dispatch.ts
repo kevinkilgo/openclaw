@@ -84,6 +84,14 @@ const EMPLOYEE_DIRECT_FILE_UPLOAD_LINE_RE =
   /^.*\b(?:OneDrive|SharePoint|Excel(?:\s+attachment)?\/?link|Excel link)\b.*https?:\/\/\S*(?:sharepoint|onedrive)\S*.*$/gimu;
 const EMPLOYEE_DIRECT_TEAMS_ATTACHMENT_DISABLED_LINE_RE =
   /^.*Direct Teams attachment delivery is still disabled\b.*$/gimu;
+const EMPLOYEE_WORKSPACE_FILE_REFERENCE_LINE_RE =
+  /^.*\b(?:full\s+workbook|workbook|spreadsheet|excel|xlsx|csv|pdf|file|attachment)\b.*\/home\/openclaw\/workspace\/.*$/gimu;
+const EMPLOYEE_FILE_REFERENCE_LINE_RE =
+  /^.*\b(?:full\s+workbook|workbook|spreadsheet|excel\s+link|excel\s+attachment|file|attachment|workspace link)\b.*\b[\w.-]+\.(?:xlsx|xls|csv|pdf|json|docx)\b.*$/gimu;
+const EMPLOYEE_STANDALONE_FILE_LINE_RE =
+  /^\s*(?:[-*]\s*)?[\w .-]+\.(?:xlsx|xls|csv|pdf|json|docx)\s*\.?\s*$/gimu;
+const EMPLOYEE_ATTACHMENT_CONFIRMATION_LINE_RE =
+  /^.*\b(?:attached|uploaded|upload|workspace link|available from the workspace link)\b.*(?:Teams|OneDrive|SharePoint|workspace link|directly).*$/gimu;
 const EMPLOYEE_WORKSPACE_ROOT = "/home/openclaw/workspace/";
 const EMPLOYEE_HOST_WORKSPACE_ROOT = "/srv/openclaw/data/employee-agents";
 
@@ -106,6 +114,7 @@ function resolveEmployeeWorkspaceMediaUrl(params: {
 function prepareEmployeeTerminalReplyPayload(params: {
   routeAgentId: string;
   text: string;
+  artifactRequested?: boolean;
 }): ReplyPayload {
   const mediaUrls: string[] = [];
   const seen = new Set<string>();
@@ -128,6 +137,19 @@ function prepareEmployeeTerminalReplyPayload(params: {
     },
   );
 
+  if (!params.artifactRequested) {
+    rewritten = rewritten
+      .replace(EMPLOYEE_WORKSPACE_FILE_REFERENCE_LINE_RE, "")
+      .replace(EMPLOYEE_FILE_REFERENCE_LINE_RE, "")
+      .replace(EMPLOYEE_STANDALONE_FILE_LINE_RE, "")
+      .replace(EMPLOYEE_DIRECT_FILE_UPLOAD_LINE_RE, "")
+      .replace(EMPLOYEE_DIRECT_TEAMS_ATTACHMENT_DISABLED_LINE_RE, "")
+      .replace(EMPLOYEE_ATTACHMENT_CONFIRMATION_LINE_RE, "")
+      .replace(/\n{3,}/gu, "\n\n")
+      .trim();
+    return { text: rewritten || params.text };
+  }
+
   if (mediaUrls.length === 0) {
     return { text: params.text };
   }
@@ -144,6 +166,16 @@ function prepareEmployeeTerminalReplyPayload(params: {
       : `I attached ${mediaUrls.length} generated files directly in Teams.`;
   const text = rewritten ? `${rewritten}\n\n${attachmentLine}` : attachmentLine;
   return { text, mediaUrls };
+}
+
+function employeeRequestExplicitlyAskedForArtifact(message: string): boolean {
+  const normalized = message.replace(/\s+/gu, " ").trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return /\b(?:artifact|attachment|attach|file|download|export|spreadsheet|workbook|excel|xlsx|csv|pdf|document)\b/u.test(
+    normalized,
+  );
 }
 
 function employeeContainerGatewayClientOptions() {
@@ -867,6 +899,7 @@ async function dispatchViaEmployeeContainer(params: {
   const payload = prepareEmployeeTerminalReplyPayload({
     routeAgentId: params.routeAgentId,
     text,
+    artifactRequested: employeeRequestExplicitlyAskedForArtifact(params.message),
   });
   trace.outboundAttemptAtMs = nowMs();
   // SAFETY: The delivery implementation treats this metadata as opaque reply lifecycle tags.

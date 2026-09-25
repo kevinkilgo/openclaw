@@ -62,12 +62,12 @@ vi.mock("./reply-dispatcher.js", () => ({
   }),
 }));
 
-function createContext(): MSTeamsTurnContext {
+function createContext(text = "Hello from Teams"): MSTeamsTurnContext {
   return {
     activity: {
       id: "teams-message-1",
       type: "message",
-      text: "Hello from Teams",
+      text,
       channelId: "msteams",
       serviceUrl: "https://service.example.test",
       from: {
@@ -226,7 +226,7 @@ I also kept [q3.json](/home/openclaw/workspace/q3.json).`,
     const runtime = { error: vi.fn() } as unknown as RuntimeEnv;
     const handler = createMSTeamsMessageHandler(createMSTeamsMessageHandlerDeps({ cfg, runtime }));
 
-    await handler(createContext());
+    await handler(createContext("Can I get that as an Excel attachment?"));
 
     expect(replyDispatcherMockState.deliver).toHaveBeenCalledWith(
       {
@@ -242,6 +242,43 @@ I also kept [q3.json](/home/openclaw/workspace/q3.json).`,
       text?: string;
     };
     expect(deliveredPayload.text).not.toContain("/home/openclaw/workspace");
+    expect(replyDispatcherMockState.settle).toHaveBeenCalledTimes(1);
+  });
+
+  it("suppresses employee workspace attachments when the user did not ask for an artifact", async () => {
+    gatewayRuntimeMockState.callGatewayFromCli.mockReset();
+    gatewayRuntimeMockState.callGatewayFromCli
+      .mockResolvedValueOnce({ runId: "run-chat-only" })
+      .mockResolvedValueOnce({
+        status: "ok",
+        terminalReply: {
+          text: `Using the Q3 opened-opportunity extract:
+
+Found 404 opportunities opened this quarter.
+
+Full workbook is here: [q3_opened.xlsx](/home/openclaw/workspace/q3_opened.xlsx)
+I attached the generated file directly in Teams.`,
+        },
+      });
+    const cfg = createConfig();
+    const runtime = { error: vi.fn() } as unknown as RuntimeEnv;
+    const handler = createMSTeamsMessageHandler(createMSTeamsMessageHandlerDeps({ cfg, runtime }));
+
+    await handler(createContext("show me the recently opened opportunities this quarter"));
+
+    expect(replyDispatcherMockState.deliver).toHaveBeenCalledWith(
+      {
+        text: "Using the Q3 opened-opportunity extract:\n\nFound 404 opportunities opened this quarter.",
+      },
+      expect.objectContaining({ kind: "final", stage: "final" }),
+    );
+    const deliveredPayload = replyDispatcherMockState.deliver.mock.calls[0]?.[0] as {
+      mediaUrls?: string[];
+      text?: string;
+    };
+    expect(deliveredPayload.mediaUrls).toBeUndefined();
+    expect(deliveredPayload.text).not.toContain("q3_opened.xlsx");
+    expect(deliveredPayload.text).not.toContain("attached");
     expect(replyDispatcherMockState.settle).toHaveBeenCalledTimes(1);
   });
 
